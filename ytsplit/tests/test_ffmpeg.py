@@ -241,3 +241,147 @@ class TestCreateFFmpegCutter:
         
         assert isinstance(cutter, FFmpegCutter)
         assert cutter.settings.x264.crf == 18  # Valeur par défaut
+
+
+class TestFFmpegCrop:
+    """Tests pour les fonctionnalités de crop."""
+    
+    @pytest.fixture
+    def settings_with_crop(self):
+        """Settings avec crop activé."""
+        return Settings(
+            crop={'enabled': True, 'bottom': 40, 'top': 0, 'left': 0, 'right': 0}
+        )
+    
+    @pytest.fixture
+    def cutter_with_crop(self, settings_with_crop):
+        """Cutter avec crop activé."""
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            return FFmpegCutter(settings_with_crop)
+    
+    @pytest.fixture
+    def plan_item(self, tmp_path):
+        """Item de plan de test."""
+        return SplitPlanItem(
+            video_id="test123",
+            chapter_index=1,
+            chapter_title="Test Chapter",
+            start_s=10.0,
+            end_s=70.0,
+            expected_duration_s=60.0,
+            output_path=tmp_path / "01 - Test Chapter.mp4"
+        )
+    
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_crop_filter_bottom_only(self, mock_resolution, cutter_with_crop, tmp_path):
+        """Test de construction filtre crop pour bottom seulement."""
+        mock_resolution.return_value = (1920, 1080)  # Full HD
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        crop_filter = cutter_with_crop._build_crop_filter(source_path)
+        
+        # Vérifications
+        assert crop_filter == "crop=1920:1040:0:0"  # 1080-40=1040 hauteur
+        mock_resolution.assert_called_once_with(source_path)
+    
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_crop_filter_all_sides(self, mock_resolution, tmp_path):
+        """Test de crop sur tous les côtés."""
+        # Settings avec crop sur tous les côtés
+        settings = Settings(
+            crop={'enabled': True, 'top': 20, 'bottom': 40, 'left': 10, 'right': 30}
+        )
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        mock_resolution.return_value = (1920, 1080)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        crop_filter = cutter._build_crop_filter(source_path)
+        
+        # Calculs attendus:
+        # width: 1920 - 10 - 30 = 1880
+        # height: 1080 - 20 - 40 = 1020
+        # x (left offset): 10
+        # y (top offset): 20
+        assert crop_filter == "crop=1880:1020:10:20"
+    
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_crop_filter_no_crop_needed(self, mock_resolution, tmp_path):
+        """Test quand aucun crop n'est nécessaire (tous à 0)."""
+        settings = Settings(
+            crop={'enabled': True, 'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
+        )
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        mock_resolution.return_value = (1920, 1080)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        crop_filter = cutter._build_crop_filter(source_path)
+        
+        assert crop_filter is None  # Pas de crop nécessaire
+    
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_crop_filter_invalid_dimensions(self, mock_resolution, tmp_path):
+        """Test avec dimensions trop petites après crop."""
+        # Crop qui laisse moins que le minimum (640x480)
+        settings = Settings(
+            crop={'enabled': True, 'bottom': 700, 'right': 1400}  # Crop trop important
+        )
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        mock_resolution.return_value = (1920, 1080)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        crop_filter = cutter._build_crop_filter(source_path)
+        
+        assert crop_filter is None  # Doit retourner None en cas d'erreur
+    
+    def test_build_ffmpeg_command_with_crop(self, cutter_with_crop, plan_item, tmp_path):
+        """Test de construction commande FFmpeg avec crop."""
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        # Simuler la résolution et le crop filter
+        with patch.object(cutter_with_crop, '_build_crop_filter', return_value="crop=1920:1040:0:0"):
+            cmd = cutter_with_crop._build_ffmpeg_command(source_path, plan_item)
+        
+        # Vérifications
+        assert "-vf" in cmd
+        crop_index = cmd.index("-vf")
+        assert cmd[crop_index + 1] == "crop=1920:1040:0:0"
+        assert "libx264" in cmd  # S'assurer que les autres options sont toujours là
+    
+    def test_build_ffmpeg_command_crop_disabled(self, plan_item, tmp_path):
+        """Test que la commande ne contient pas -vf quand crop désactivé."""
+        settings = Settings(crop={'enabled': False})
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        source_path = tmp_path / "source.mp4" 
+        source_path.write_text("fake video")
+        
+        cmd = cutter._build_ffmpeg_command(source_path, plan_item)
+        
+        assert "-vf" not in cmd  # Pas de filtre vidéo
+        assert "libx264" in cmd  # Autres options présentes
+    
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_crop_filter_resolution_error(self, mock_resolution, cutter_with_crop, tmp_path):
+        """Test de gestion d'erreur lors de l'obtention de résolution."""
+        from ytsplit.utils.ffprobe import FFprobeError
+        mock_resolution.side_effect = FFprobeError("Erreur FFprobe")
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        crop_filter = cutter_with_crop._build_crop_filter(source_path)
+        
+        assert crop_filter is None  # Doit gérer l'erreur gracieusement

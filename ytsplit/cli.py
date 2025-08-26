@@ -57,6 +57,12 @@ def split(
     max_parallel: Annotated[Optional[int], typer.Option("--max-parallel", help="Nombre de processus FFmpeg parallèles")] = None,
     tolerance: Annotated[Optional[float], typer.Option("--tolerance", help="Tolérance de durée en secondes")] = None,
     
+    # Options de recadrage
+    crop_top: Annotated[Optional[int], typer.Option("--crop-top", help="Pixels à rogner en haut")] = None,
+    crop_bottom: Annotated[Optional[int], typer.Option("--crop-bottom", help="Pixels à rogner en bas (ex: 40 pour barre des tâches)")] = None,
+    crop_left: Annotated[Optional[int], typer.Option("--crop-left", help="Pixels à rogner à gauche")] = None,
+    crop_right: Annotated[Optional[int], typer.Option("--crop-right", help="Pixels à rogner à droite")] = None,
+    
     # Options de configuration
     config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Fichier de configuration YAML")] = None,
     
@@ -114,6 +120,19 @@ def split(
         settings.validation.tolerance_seconds = tolerance
     if export_manifest is not None:
         settings.manifest.export = export_manifest.split(',')
+    
+    # Appliquer les options de crop
+    crop_options_provided = any([crop_top, crop_bottom, crop_left, crop_right])
+    if crop_options_provided:
+        settings.crop.enabled = True
+        if crop_top is not None:
+            settings.crop.top = crop_top
+        if crop_bottom is not None:
+            settings.crop.bottom = crop_bottom
+        if crop_left is not None:
+            settings.crop.left = crop_left
+        if crop_right is not None:
+            settings.crop.right = crop_right
     
     # Affichage de la configuration si mode verbeux
     if settings.verbose:
@@ -341,14 +360,14 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
                         successful += 1
                         if settings.verbose:
                             duration = result.obtained_duration_s or 0
-                            console.print(f"    ✓ Ch.{plan_item.chapter_index}: {duration:.1f}s")
+                            console.print(f"    + Ch.{plan_item.chapter_index}: {duration:.1f}s")
                     else:
                         failed += 1
-                        console.print(f"    ✗ Ch.{plan_item.chapter_index}: {result.message}")
+                        console.print(f"    - Ch.{plan_item.chapter_index}: {result.message}")
                     
                 except Exception as e:
                     failed += 1
-                    console.print(f"    ✗ Ch.{plan_item.chapter_index}: Erreur inattendue - {e}")
+                    console.print(f"    - Ch.{plan_item.chapter_index}: Erreur inattendue - {e}")
                 
                 progress.advance(task)
         

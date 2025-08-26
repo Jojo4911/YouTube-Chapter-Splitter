@@ -50,6 +50,17 @@ class NamingSettings(BaseModel):
     )
 
 
+class CropSettings(BaseModel):
+    """Configuration pour le recadrage vidéo."""
+    enabled: bool = Field(default=False, description="Activer le recadrage vidéo")
+    top: int = Field(default=0, ge=0, description="Pixels à rogner en haut")
+    bottom: int = Field(default=0, ge=0, description="Pixels à rogner en bas")
+    left: int = Field(default=0, ge=0, description="Pixels à rogner à gauche") 
+    right: int = Field(default=0, ge=0, description="Pixels à rogner à droite")
+    min_width: int = Field(default=640, gt=0, description="Largeur minimum après crop")
+    min_height: int = Field(default=480, gt=0, description="Hauteur minimum après crop")
+
+
 class Settings(BaseSettings):
     """Configuration principale de l'application."""
     
@@ -81,6 +92,7 @@ class Settings(BaseSettings):
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
     parallel: ParallelSettings = Field(default_factory=ParallelSettings)
     naming: NamingSettings = Field(default_factory=NamingSettings)
+    crop: CropSettings = Field(default_factory=CropSettings)
     
     # Options avancées
     keep_source: bool = Field(default=True, description="Conserver le fichier source après découpage")

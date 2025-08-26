@@ -212,6 +212,15 @@ class FFmpegCutter:
             "-i", str(source_path),
             "-ss", start_time,
             "-to", end_time,
+        ]
+        
+        # Ajouter le filtre crop si activé
+        if self.settings.crop.enabled:
+            crop_filter = self._build_crop_filter(source_path)
+            if crop_filter:
+                cmd.extend(["-vf", crop_filter])
+        
+        cmd.extend([
             "-c:v", "libx264",
             "-crf", str(self.settings.x264.crf),
             "-preset", self.settings.x264.preset,
@@ -221,9 +230,49 @@ class FFmpegCutter:
             "-map", "0",
             "-y",  # Overwrite output files
             str(plan_item.output_path)
-        ]
+        ])
         
         return cmd
+    
+    def _build_crop_filter(self, source_path: Path) -> Optional[str]:
+        """
+        Construit le filtre crop FFmpeg basé sur la configuration.
+        
+        Args:
+            source_path: Chemin du fichier source pour obtenir la résolution
+            
+        Returns:
+            str: Filtre crop au format "crop=width:height:x:y" ou None si invalid
+        """
+        try:
+            # Obtenir la résolution de la vidéo source
+            from ..utils.ffprobe import get_video_resolution
+            source_width, source_height = get_video_resolution(source_path)
+            
+            # Calculer les dimensions après crop
+            crop_width = source_width - self.settings.crop.left - self.settings.crop.right
+            crop_height = source_height - self.settings.crop.top - self.settings.crop.bottom
+            
+            # Validation des dimensions minimales
+            if crop_width < self.settings.crop.min_width:
+                raise ValueError(f"Largeur après crop ({crop_width}px) < minimum ({self.settings.crop.min_width}px)")
+            
+            if crop_height < self.settings.crop.min_height:
+                raise ValueError(f"Hauteur après crop ({crop_height}px) < minimum ({self.settings.crop.min_height}px)")
+            
+            # Si pas de crop nécessaire (tous les paramètres sont 0)
+            if all(getattr(self.settings.crop, side) == 0 for side in ['top', 'bottom', 'left', 'right']):
+                return None
+            
+            # Format FFmpeg: crop=width:height:x:y
+            # x = position horizontale (left offset)
+            # y = position verticale (top offset)
+            return f"crop={crop_width}:{crop_height}:{self.settings.crop.left}:{self.settings.crop.top}"
+            
+        except Exception as e:
+            # En cas d'erreur, on log et on désactive le crop
+            print(f"Erreur lors de la construction du filtre crop: {e}")
+            return None
     
     def cut_batch(
         self,
