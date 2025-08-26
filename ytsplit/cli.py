@@ -9,8 +9,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .config import Settings
-from .models import VideoMeta, ProcessingStats
+from .models import VideoMeta, ProcessingStats, SplitResult
 from .providers.youtube import create_youtube_provider, YouTubeError
+from .planning.plan import create_split_planner, PlanningError
+from .cutting.ffmpeg import create_ffmpeg_cutter, FFmpegError
 
 # Configuration Typer
 app = typer.Typer(
@@ -145,7 +147,7 @@ def split(
             all_stats.total_processing_time_s += stats.total_processing_time_s
             
         except Exception as e:
-            console.print(f"[bold red]❌ Erreur lors du traitement:[/bold red] {str(e)}")
+            console.print(f"[bold red]>>> Erreur lors du traitement:[/bold red] {str(e)}")
             continue
     
     # Affichage des statistiques finales
@@ -269,21 +271,122 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
             console.print(f"  > Fichier téléchargé: {video_file.name}")
             console.print(f"    Taille: {video_file.stat().st_size / 1024 / 1024:.1f} MB")
         
-        # TODO: Implémenter le découpage réel
-        console.print("  [yellow]> Découpage non encore implémenté[/yellow]")
+        # Planification du découpage
+        console.print("  > Planification du découpage...")
+        planner = create_split_planner(settings)
+        
+        try:
+            split_plan = planner.build_split_plan(meta)
+        except PlanningError as e:
+            console.print(f"  [red]> Erreur de planification: {e}[/red]")
+            processing_time = time.time() - start_time
+            
+            return ProcessingStats(
+                total_chapters=len(meta.chapters),
+                successful_chapters=0,
+                failed_chapters=len(meta.chapters),
+                total_duration_s=meta.duration_s,
+                total_processing_time_s=processing_time
+            )
+        
+        # Filtrage des fichiers existants
+        to_process, existing = planner.filter_existing_files(split_plan)
+        
+        if existing:
+            console.print(f"  > {len(existing)} chapitre(s) déjà traité(s) et valide(s)")
+        
+        if not to_process:
+            console.print("  > Tous les chapitres sont déjà traités")
+            processing_time = time.time() - start_time
+            
+            return ProcessingStats(
+                total_chapters=len(meta.chapters),
+                successful_chapters=len(meta.chapters),
+                failed_chapters=0,
+                total_duration_s=meta.duration_s,
+                total_processing_time_s=processing_time
+            )
+        
+        console.print(f"  > {len(to_process)} chapitre(s) à traiter")
+        
+        # Estimation du temps de traitement
+        estimates = planner.estimate_processing_time(to_process)
+        estimated_minutes = estimates["estimated_processing_time"] / 60
+        console.print(f"  > Temps estimé: {estimated_minutes:.1f} minutes")
+        
+        # Découpage avec FFmpeg
+        console.print("  > Découpage en cours...")
+        cutter = create_ffmpeg_cutter(settings)
+        
+        results = []
+        successful = 0
+        failed = 0
+        
+        # Progress bar pour le découpage
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            expand=True
+        ) as progress:
+            task = progress.add_task("Découpage des chapitres", total=len(to_process))
+            
+            for plan_item in to_process:
+                try:
+                    progress.update(task, description=f"Chapitre {plan_item.chapter_index}: {plan_item.chapter_title[:30]}...")
+                    
+                    result = cutter.cut_precise(video_file, plan_item)
+                    results.append(result)
+                    
+                    if result.status == "OK":
+                        successful += 1
+                        if settings.verbose:
+                            duration = result.obtained_duration_s or 0
+                            console.print(f"    ✓ Ch.{plan_item.chapter_index}: {duration:.1f}s")
+                    else:
+                        failed += 1
+                        console.print(f"    ✗ Ch.{plan_item.chapter_index}: {result.message}")
+                    
+                except Exception as e:
+                    failed += 1
+                    console.print(f"    ✗ Ch.{plan_item.chapter_index}: Erreur inattendue - {e}")
+                
+                progress.advance(task)
+        
+        # Ajouter les fichiers existants aux stats
+        successful += len(existing)
+        
+        # Nettoyage du fichier source si demandé
+        if not settings.keep_source:
+            try:
+                video_file.unlink()
+                console.print("  > Fichier source supprimé")
+            except Exception as e:
+                console.print(f"  [yellow]> Impossible de supprimer le fichier source: {e}[/yellow]")
         
         processing_time = time.time() - start_time
         
         return ProcessingStats(
             total_chapters=len(meta.chapters),
-            successful_chapters=len(meta.chapters),  # Pour l'instant, considéré comme réussi
-            failed_chapters=0,
+            successful_chapters=successful,
+            failed_chapters=failed,
             total_duration_s=meta.duration_s,
             total_processing_time_s=processing_time
         )
         
     except YouTubeError as e:
         console.print(f"  [red]> Erreur YouTube: {e}[/red]")
+        processing_time = time.time() - start_time
+        
+        return ProcessingStats(
+            total_chapters=0,
+            successful_chapters=0,
+            failed_chapters=1,
+            total_duration_s=0.0,
+            total_processing_time_s=processing_time
+        )
+    
+    except (FFmpegError, PlanningError) as e:
+        console.print(f"  [red]> Erreur de traitement: {e}[/red]")
         processing_time = time.time() - start_time
         
         return ProcessingStats(
@@ -311,7 +414,7 @@ def show_configuration(settings: Settings, show_title: bool = True) -> None:
     """Affiche la configuration actuelle."""
     
     if show_title:
-        console.print("\n[bold blue]🔧 Configuration:[/bold blue]")
+        console.print("\n[bold blue]>>> Configuration:[/bold blue]")
     
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Paramètre", style="cyan", no_wrap=True)
