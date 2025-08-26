@@ -1,0 +1,1 @@
+"""Module de planification des segments à découper."""
