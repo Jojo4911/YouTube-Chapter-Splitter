@@ -262,15 +262,9 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
             console.print(f"  > Fichier déjà en cache: {existing_file.name}")
             video_file = existing_file
         else:
-            console.print("  > Téléchargement en cours...")
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console
-            ) as progress:
-                task = progress.add_task("Téléchargement...", total=None)
-                video_file = provider.download_video(url)
-                progress.update(task, description="Téléchargement terminé")
+            console.print("  > Téléchargement en cours... (cela peut prendre quelques minutes)")
+            video_file = provider.download_video(url)
+            console.print("  > Téléchargement terminé")
             
             console.print(f"  > Fichier téléchargé: {video_file.name}")
             console.print(f"    Taille: {video_file.stat().st_size / 1024 / 1024:.1f} MB")
