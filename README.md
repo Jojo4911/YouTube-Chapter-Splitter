@@ -12,11 +12,12 @@ Un outil de découpage précis de vidéos YouTube par chapitre, développé en P
 
 ## ✨ Fonctionnalités
 
-### 🎉 MVP Fonctionnel (Étapes 1-2 terminées)
+### 🎉 MVP Fonctionnel (Étapes 1-2 + Crop terminées)
 - [x] Architecture modulaire avec Pydantic et Typer
 - [x] **Téléchargement YouTube** avec yt-dlp et cache intelligent
 - [x] **Extraction des métadonnées** et chapitres automatique
 - [x] **Découpage FFmpeg** frame-accurate avec ré-encodage
+- [x] **Crop vidéo intégré** pour enlever barres des tâches (tutoriels)
 - [x] **Planification des segments** avec validation complète
 - [x] **Gestion des noms sûrs** pour Windows/Linux/Mac
 - [x] **Validation des durées** avec FFprobe et tolérance
@@ -25,7 +26,7 @@ Un outil de découpage précis de vidéos YouTube par chapitre, développé en P
 - [x] Parsing robuste des timecodes (HH:MM:SS, MM:SS, SS)
 - [x] Configuration flexible via YAML
 - [x] Interface CLI complète et intuitive
-- [x] **29 tests unitaires** et tests d'intégration
+- [x] **36 tests unitaires** et tests d'intégration complets
 
 ### 🔮 Prochaines étapes (V2)
 - [ ] Parsing des chapitres depuis description vidéo
@@ -86,6 +87,11 @@ python -m ytsplit split "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --preset u
 # Découpage haute qualité avec preset lent
 python -m ytsplit split "URL" --preset slow --crf 16 --audio-bitrate 256k
 
+# 🎬 CROP POUR TUTORIELS - Enlever la barre des tâches Windows
+python -m ytsplit split "URL" --crop-bottom 40                    # Barre des tâches standard
+python -m ytsplit split "URL" --crop-top 10 --crop-bottom 50      # + Marge haute
+python -m ytsplit split "URL" --crop-bottom 40 --preset fast      # Crop + qualité optimisée
+
 # Contrôle du workflow
 python -m ytsplit split "URL" --keep-source --no-skip-existing --tolerance 0.5
 ```
@@ -129,6 +135,16 @@ naming:
     "<": "＜"
     ">": "＞"
 
+# 🎬 Crop vidéo (pour tutoriels)
+crop:
+  enabled: false                      # Activer le recadrage
+  top: 0                             # Pixels à rogner en haut
+  bottom: 40                         # Pixels à rogner en bas (barre des tâches)
+  left: 0                            # Pixels à rogner à gauche
+  right: 0                           # Pixels à rogner à droite
+  min_width: 640                     # Largeur minimum après crop
+  min_height: 480                    # Hauteur minimum après crop
+
 # Options de comportement
 keep_source: true                     # Garder les fichiers sources
 skip_existing: true                   # Ignorer les fichiers déjà traités
@@ -155,7 +171,7 @@ ytsplit/
 │   └── naming.py         # ✅ Nommage sûr cross-platform
 ├── utils/
 │   └── ffprobe.py        # ✅ Analyse vidéo et validation durée
-└── tests/                # ✅ 29 tests unitaires complets
+└── tests/                # ✅ 36 tests unitaires complets
     ├── test_timecode.py
     ├── test_models.py
     ├── test_youtube.py
@@ -166,27 +182,28 @@ ytsplit/
 ## 🧪 Tests
 
 ```bash
-# Lancer tous les tests (29 tests)
+# Lancer tous les tests (36 tests)
 python -m pytest ytsplit/tests/ -v
 
 # Tests par module
-python -m pytest ytsplit/tests/test_timecode.py -v      # Parsing timecodes
-python -m pytest ytsplit/tests/test_models.py -v        # Modèles Pydantic
-python -m pytest ytsplit/tests/test_youtube.py -v       # Provider YouTube
-python -m pytest ytsplit/tests/test_ffmpeg.py -v        # Découpage FFmpeg
-python -m pytest ytsplit/tests/test_planning.py -v      # Planification
+python -m pytest ytsplit/tests/test_timecode.py -v      # Parsing timecodes (7 tests)
+python -m pytest ytsplit/tests/test_models.py -v        # Modèles Pydantic (5 tests)
+python -m pytest ytsplit/tests/test_youtube.py -v       # Provider YouTube (7 tests) 
+python -m pytest ytsplit/tests/test_ffmpeg.py -v        # Découpage FFmpeg + Crop (20 tests)
+python -m pytest ytsplit/tests/test_planning.py -v      # Planification (16 tests)
 
 # Tests d'intégration complets
 python -m ytsplit split "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --dry-run --verbose
+python -m ytsplit split "URL" --crop-bottom 40 --dry-run --verbose  # Test crop
 ```
 
 ### Couverture actuelle ✅
 - **Parsing timecodes** : 100% (7 tests)
 - **Modèles Pydantic** : 100% (5 tests)  
 - **Provider YouTube** : 100% (7 tests + intégration)
-- **Découpage FFmpeg** : 100% (13 tests)
+- **Découpage FFmpeg + Crop** : 100% (20 tests)
 - **Planification** : 100% (16 tests)
-- **Tests d'intégration** : Workflow complet validé
+- **Tests d'intégration** : Workflow complet + crop validés
 
 ## 📊 Formats et flux de données
 
@@ -287,7 +304,14 @@ python -m mypy ytsplit/ --ignore-missing-imports
 - [x] **Planification** : Validation segments + nommage sûr
 - [x] **Utilitaires** : FFprobe + analyse durée
 - [x] **CLI complète** : Workflow end-to-end opérationnel
-- [x] **Tests complets** : 29 tests + intégration validée
+- [x] **Tests complets** : 36 tests + intégration validée
+
+### ✅ Phase 2.5 - Crop Tutoriels (Terminée)
+- [x] **Configuration crop** : CropSettings avec validation Pydantic
+- [x] **Intégration FFmpeg** : Filtre crop automatique avec FFprobe  
+- [x] **Options CLI** : --crop-top/bottom/left/right intuitives
+- [x] **Tests crop** : 7 tests dédiés (36 tests total)
+- [x] **Validation** : Dimensions minimales + gestion d'erreurs
 
 ### 🔮 Phase 3 - Extensions (Futures)
 - [ ] **Parsing description** : Extraction chapitres depuis texte
@@ -297,10 +321,10 @@ python -m mypy ytsplit/ --ignore-missing-imports
 - [ ] **Multi-plateformes** : Support Vimeo + fichiers locaux
 
 ### 📊 Métriques actuelles
-- **Lignes de code** : ~1800+ lignes
-- **Couverture tests** : 29 tests (100% modules core)
+- **Lignes de code** : ~2100+ lignes
+- **Couverture tests** : 36 tests (100% modules core + crop)
 - **Modules** : 7 modules fonctionnels
-- **Fonctionnalités** : Workflow complet YouTube → Chapitres découpés
+- **Fonctionnalités** : Workflow complet YouTube → Chapitres découpés + crop
 
 ## 🎬 Exemple d'exécution
 
@@ -338,6 +362,36 @@ Chapitre 1: Rick Astley - Never Gonna Give...
 ```
 
 **Résultat** : Fichier créé dans `output/Rick Astley - Never Gonna Give You Up-dQw4w9WgXcQ/01 - Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).mp4`
+
+## 🎬 Exemple avec Crop (Tutoriels)
+
+```bash
+$ python -m ytsplit split "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --crop-bottom 40 --preset ultrafast --crf 30 --verbose
+
+>>> Configuration:
+| Paramètre             | Valeur    |
+|-----------------------|-----------|
+| Répertoire de sortie  | output    |
+| CRF (qualité)         | 30        |
+| Preset                | ultrafast |
+| 🎬 Crop activé        | bottom=40 |
+
+>>> Traitement de 1 vidéo(s)
+
+Video 1/1: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+  > Extraction des métadonnées...
+  > Vidéo: Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)
+  > Résolution source: 1920x1080
+  > Résolution après crop: 1920x1040 (40px enlevés en bas)
+  > Planification du découpage...
+  > Découpage en cours avec crop...
+    + Ch.1: 213.0s
+
+>>> Résultats finaux:
+*** Tous les chapitres ont été traités avec succès !
+```
+
+**Résultat** : Vidéo 1920x1040 sans barre des tâches Windows ! 🎉
 
 ## 📄 Licence
 
