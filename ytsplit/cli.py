@@ -10,6 +10,7 @@ from rich.table import Table
 
 from .config import Settings
 from .models import VideoMeta, ProcessingStats
+from .providers.youtube import create_youtube_provider, YouTubeError
 
 # Configuration Typer
 app = typer.Typer(
@@ -119,7 +120,7 @@ def split(
     # Validation des URLs
     validated_urls = validate_youtube_urls(urls)
     
-    console.print(f"\n[bold blue]🎬 Traitement de {len(validated_urls)} vidéo(s)[/bold blue]\n")
+    console.print(f"\n[bold blue]>>> Traitement de {len(validated_urls)} vidéo(s)[/bold blue]\n")
     
     # Traitement des vidéos
     all_stats = ProcessingStats(
@@ -131,7 +132,7 @@ def split(
     )
     
     for i, url in enumerate(validated_urls, 1):
-        console.print(f"[bold cyan]📹 Vidéo {i}/{len(validated_urls)}:[/bold cyan] {url}")
+        console.print(f"[bold cyan]Video {i}/{len(validated_urls)}:[/bold cyan] {url}")
         
         try:
             stats = process_single_video(url, settings)
@@ -220,18 +221,96 @@ def validate_youtube_urls(urls: List[str]) -> List[str]:
 
 def process_single_video(url: str, settings: Settings) -> ProcessingStats:
     """Traite une seule vidéo et retourne les statistiques."""
-    # TODO: Implémenter le traitement complet
-    # Pour l'instant, retournons des stats de test
+    import time
+    start_time = time.time()
     
-    console.print("  [yellow]⚠️  Traitement non encore implémenté[/yellow]")
+    try:
+        # Créer le provider YouTube
+        provider = create_youtube_provider(settings)
+        
+        console.print("  > Extraction des métadonnées...")
+        
+        # Extraire les métadonnées
+        meta = provider.get_video_info(url)
+        
+        console.print(f"  > Vidéo: [bold]{meta.title}[/bold]")
+        console.print(f"  > Durée: {meta.duration_s / 60:.1f} minutes")
+        console.print(f"  > {len(meta.chapters)} chapitre(s) détecté(s)")
+        
+        # Afficher les chapitres
+        for chapter in meta.chapters:
+            duration = chapter.end_s - chapter.start_s
+            console.print(f"     {chapter.index:2d}. {chapter.title} ({duration:.1f}s)")
+        
+        if settings.dry_run:
+            console.print("  [yellow]> Mode simulation - pas de téléchargement ni de découpage[/yellow]")
+            processing_time = time.time() - start_time
+            
+            return ProcessingStats(
+                total_chapters=len(meta.chapters),
+                successful_chapters=len(meta.chapters),  # Considéré comme réussi en simulation
+                failed_chapters=0,
+                total_duration_s=meta.duration_s,
+                total_processing_time_s=processing_time
+            )
+        
+        # Téléchargement (si pas en mode dry_run)
+        console.print("  > Vérification du cache...")
+        existing_file = provider.get_video_file_path(meta.video_id)
+        
+        if existing_file and settings.skip_existing:
+            console.print(f"  > Fichier déjà en cache: {existing_file.name}")
+            video_file = existing_file
+        else:
+            console.print("  > Téléchargement en cours...")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("Téléchargement...", total=None)
+                video_file = provider.download_video(url)
+                progress.update(task, description="Téléchargement terminé")
+            
+            console.print(f"  > Fichier téléchargé: {video_file.name}")
+            console.print(f"    Taille: {video_file.stat().st_size / 1024 / 1024:.1f} MB")
+        
+        # TODO: Implémenter le découpage réel
+        console.print("  [yellow]> Découpage non encore implémenté[/yellow]")
+        
+        processing_time = time.time() - start_time
+        
+        return ProcessingStats(
+            total_chapters=len(meta.chapters),
+            successful_chapters=len(meta.chapters),  # Pour l'instant, considéré comme réussi
+            failed_chapters=0,
+            total_duration_s=meta.duration_s,
+            total_processing_time_s=processing_time
+        )
+        
+    except YouTubeError as e:
+        console.print(f"  [red]> Erreur YouTube: {e}[/red]")
+        processing_time = time.time() - start_time
+        
+        return ProcessingStats(
+            total_chapters=0,
+            successful_chapters=0,
+            failed_chapters=1,
+            total_duration_s=0.0,
+            total_processing_time_s=processing_time
+        )
     
-    return ProcessingStats(
-        total_chapters=0,
-        successful_chapters=0,
-        failed_chapters=0,
-        total_duration_s=0.0,
-        total_processing_time_s=0.0
-    )
+    except Exception as e:
+        console.print(f"  [red]> Erreur inattendue: {e}[/red]")
+        processing_time = time.time() - start_time
+        
+        return ProcessingStats(
+            total_chapters=0,
+            successful_chapters=0,
+            failed_chapters=1,
+            total_duration_s=0.0,
+            total_processing_time_s=processing_time
+        )
 
 
 def show_configuration(settings: Settings, show_title: bool = True) -> None:
@@ -260,25 +339,25 @@ def show_configuration(settings: Settings, show_title: bool = True) -> None:
 def show_final_stats(stats: ProcessingStats) -> None:
     """Affiche les statistiques finales."""
     
-    console.print(f"\n[bold blue]📊 Résultats finaux:[/bold blue]")
+    console.print(f"\n[bold blue]>>> Résultats finaux:[/bold blue]")
     
     # Panneau principal avec les stats
     stats_content = f"""
-[green]✅ Chapitres réussis:[/green] {stats.successful_chapters}
-[red]❌ Chapitres échoués:[/red] {stats.failed_chapters}
-[blue]📈 Taux de réussite:[/blue] {stats.success_rate:.1f}%
-[yellow]⏱️  Durée totale:[/yellow] {stats.total_duration_s:.1f}s
-[cyan]🕒 Temps de traitement:[/cyan] {stats.total_processing_time_s:.1f}s
+[green]OK  Chapitres réussis:[/green] {stats.successful_chapters}
+[red]ERR Chapitres échoués:[/red] {stats.failed_chapters}
+[blue]%   Taux de réussite:[/blue] {stats.success_rate:.1f}%
+[yellow]T   Durée totale:[/yellow] {stats.total_duration_s:.1f}s
+[cyan]P   Temps de traitement:[/cyan] {stats.total_processing_time_s:.1f}s
     """.strip()
     
     console.print(Panel(stats_content, title="Statistiques", border_style="blue"))
     
     if stats.total_chapters == 0:
-        console.print("[yellow]⚠️  Aucun chapitre traité[/yellow]")
+        console.print("[yellow]! Aucun chapitre traité[/yellow]")
     elif stats.success_rate == 100.0:
-        console.print("[bold green]🎉 Tous les chapitres ont été traités avec succès ![/bold green]")
+        console.print("[bold green]*** Tous les chapitres ont été traités avec succès ![/bold green]")
     elif stats.failed_chapters > 0:
-        console.print(f"[yellow]⚠️  {stats.failed_chapters} chapitre(s) en erreur. Vérifiez les logs.[/yellow]")
+        console.print(f"[yellow]! {stats.failed_chapters} chapitre(s) en erreur. Vérifiez les logs.[/yellow]")
 
 
 if __name__ == "__main__":
