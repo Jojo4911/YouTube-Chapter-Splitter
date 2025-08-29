@@ -571,14 +571,16 @@ Par défaut, le téléchargement automatique des sous‑titres est désactivé. 
 Recherche automatique locale (sans réseau):
 
 - Pour l’ID `VIDEO_ID`, les chemins suivants sont recherchés dans `cache/` et `./custom/`:
-  - `VIDEO_ID.srt`, `VIDEO_ID.vtt`, `VIDEO_ID.en.srt`, `VIDEO_ID.en.vtt`, et plus largement `VIDEO_ID.*.srt|vtt`.
+  - `VIDEO_ID.srt`, `VIDEO_ID.vtt`, `VIDEO_ID.en.srt`, `VIDEO_ID.en.vtt`
+  - plus largement `VIDEO_ID.*.srt|vtt`
+  - et désormais tout fichier qui se termine par `-VIDEO_ID.*.srt|vtt`
 
 Exemples:
 
 ```bash
 python -m ytsplit.cli split "https://www.youtube.com/watch?v=8JFMiIlSdlg" --subtitles-file ./custom/8JFMiIlSdlg.en.srt
-# ou
-# déposer custom/8JFMiIlSdlg.en.srt puis
+# ou (noms riches côté utilisateur)
+# déposer par ex. custom/REPORT COURSE - Session 4-6 (EMEA  America)-8JFMiIlSdlg.en.srt puis
 python -m ytsplit.cli split "https://www.youtube.com/watch?v=8JFMiIlSdlg"
 ```
 

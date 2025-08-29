@@ -96,10 +96,17 @@ class SubtitleDownloader:
             candidates.extend((d / f"{video_id}.{suf}") for suf in ("srt", "vtt"))
             candidates.extend((d / f"{video_id}.en.{suf}") for suf in ("srt", "vtt"))
             if d.exists():
+                # nouveau pattern: <title>-<video_id>.<lang>.<ext> ou <title>-<video_id>.<ext>
+                for p in d.glob(f"*-{video_id}.*"):
+                    if p.suffix.lower() in (".srt", ".vtt"):
+                        candidates.append(p)
                 for p in d.glob(f"{video_id}.*"):
                     if p.suffix.lower() in (".srt", ".vtt"):
                         candidates.append(p)
         # glob élargi dans work_dir
+        for p in work_dir.glob(f"*-{video_id}.*"):
+            if p.suffix.lower() in (".srt", ".vtt"):
+                candidates.append(p)
         for p in work_dir.glob(f"{video_id}.*"):
             if p.suffix.lower() in (".srt", ".vtt"):
                 candidates.append(p)

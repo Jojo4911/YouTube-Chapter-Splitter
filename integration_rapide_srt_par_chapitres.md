@@ -1,82 +1,82 @@
-# Intégration rapide — Découper un SRT global validé en SRT par chapitre
+﻿# IntÃ©gration rapide â€” DÃ©couper un SRT global validÃ© en SRT par chapitre
 
-> Objectif : **ne pas relancer Whisper**. On part d’un **fichier SRT global déjà validé** (issu de ton module ASR) et on **génère automatiquement un SRT par chapitre**, parfaitement aligné avec les clips vidéo produits par l’outil de découpe.
+> Objectif : **ne pas relancer Whisper**. On part dâ€™un **fichier SRT global dÃ©jÃ  validÃ©** (issu de ton module ASR) et on **gÃ©nÃ¨re automatiquement un SRT par chapitre**, parfaitement alignÃ© avec les clips vidÃ©o produits par lâ€™outil de dÃ©coupe.
 
 ---
 
-## Vue d’ensemble
+## Vue dâ€™ensemble
 
-1. **Entrées** :
-   - Une **vidéo principale** (YouTube téléchargée) **avec chapitres**.
-   - Un **SRT global validé** correspondant à **cette vidéo** (mêmes timecodes).
+1. **EntrÃ©es** :
+   - Une **vidÃ©o principale** (YouTube tÃ©lÃ©chargÃ©e) **avec chapitres**.
+   - Un **SRT global validÃ©** correspondant Ã  **cette vidÃ©o** (mÃªmes timecodes).
 2. **Sorties** :
-   - Une **vidéo par chapitre** (déjà gérée par le splitter).
-   - Un **SRT par chapitre** (`.srt`) avec les timecodes **rebasés à 00:00:00,000**.
+   - Une **vidÃ©o par chapitre** (dÃ©jÃ  gÃ©rÃ©e par le splitter).
+   - Un **SRT par chapitre** (`.srt`) avec les timecodes **rebasÃ©s Ã  00:00:00,000**.
 3. **Principe** :
    - Lire le **plan des chapitres** (start_s, end_s).
-   - **Découper** le SRT global par **chevauchement** des sous-titres avec chaque chapitre.
-   - **Tronquer** si nécessaire et **recaler** les timecodes pour démarrer à `00:00:00,000` dans chaque fichier SRT de chapitre.
-   - **Renuméroter** séquentiellement les entrées SRT (1, 2, 3…).
+   - **DÃ©couper** le SRT global par **chevauchement** des sous-titres avec chaque chapitre.
+   - **Tronquer** si nÃ©cessaire et **recaler** les timecodes pour dÃ©marrer Ã  `00:00:00,000` dans chaque fichier SRT de chapitre.
+   - **RenumÃ©roter** sÃ©quentiellement les entrÃ©es SRT (1, 2, 3â€¦).
 
 ---
 
-## Hypothèses & prérequis
+## HypothÃ¨ses & prÃ©requis
 
-- Le SRT global est **synchronisé** avec **la vidéo téléchargée par le splitter** (même source, même montage, aucun offset).
-- Les chapitres sont **fiables** : chaque chapitre a des bornes `[t0, t1)` (en secondes) cohérentes et validées.
-- Python ≥ 3.10. Dépendances Python : `srt` (parsing/compose).
-- Organisation des sorties : conserver le **même schéma de nommage** que les vidéos chapitrées (sidecar `.srt`).
+- Le SRT global est **synchronisÃ©** avec **la vidÃ©o tÃ©lÃ©chargÃ©e par le splitter** (mÃªme source, mÃªme montage, aucun offset).
+- Les chapitres sont **fiables** : chaque chapitre a des bornes `[t0, t1)` (en secondes) cohÃ©rentes et validÃ©es.
+- Python â‰¥ 3.10. DÃ©pendances Python : `srt` (parsing/compose).
+- Organisation des sorties : conserver le **mÃªme schÃ©ma de nommage** que les vidÃ©os chapitrÃ©es (sidecar `.srt`).
 
-> ⚠️ Si un léger **offset** est observé entre la vidéo et le SRT (ex. +0,500 s), prévoir une **option d’offset** (ex. `--subs-offset 0.5`) appliquée **avant** la découpe.
+> âš ï¸ Si un lÃ©ger **offset** est observÃ© entre la vidÃ©o et le SRT (ex. +0,500 s), prÃ©voir une **option dâ€™offset** (ex. `--subs-offset 0.5`) appliquÃ©e **avant** la dÃ©coupe.
 
 ---
 
-## Intégration dans le splitter (sans ajout de transcription)
+## IntÃ©gration dans le splitter (sans ajout de transcription)
 
-### 1) Nouveaux paramètres CLI (Typer)
+### 1) Nouveaux paramÃ¨tres CLI (Typer)
 
-- `--subs-from PATH`: chemin vers le **SRT global validé** (obligatoire pour activer la découpe de sous-titres).
-- `--subs-offset FLOAT`: **optionnel**, en secondes, positif ou négatif (défaut `0.0`).
-- `--subs-min-duration-ms INT`: **optionnel**, durée minimale d’un sous-titre après découpe (défaut `300` ms).
-- `--subs-encoding STR`: **optionnel**, encodage du SRT `utf-8` par défaut.
+- `--subs-from PATH`: chemin vers le **SRT global validÃ©** (obligatoire pour activer la dÃ©coupe de sous-titres).
+- `--subs-offset FLOAT`: **optionnel**, en secondes, positif ou nÃ©gatif (dÃ©faut `0.0`).
+- `--subs-min-duration-ms INT`: **optionnel**, durÃ©e minimale dâ€™un sous-titre aprÃ¨s dÃ©coupe (dÃ©faut `300` ms).
+- `--subs-encoding STR`: **optionnel**, encodage du SRT `utf-8` par dÃ©faut.
 
-**Exemple** :
+**Exemple**Â :
 
 ```bash
 ytsplit   --url "https://www.youtube.com/watch?v=XXXX"   --work-dir "./out"   --use-chapters true   --subs-from "./subs/global_validated.srt"   --subs-offset 0.0
 ```
 
-> Si `--subs-from` n’est pas fourni, **aucune** génération de SRT par chapitre n’est faite (comportement no-op, warning non bloquant).
+> Si `--subs-from` nâ€™est pas fourni, **aucune** gÃ©nÃ©ration de SRT par chapitre nâ€™est faite (comportement no-op, warning non bloquant).
 
-### 2) Points d’accroche dans le pipeline
+### 2) Points dâ€™accroche dans le pipeline
 
-- **Après** avoir calculé/validé le **planning des chapitres** et **avant/pendant** l’étape de découpe vidéo, appeler un module `subtitles/slicer.py` qui :
-  1. Parse le SRT global (en appliquant `subs-offset` si ≠ 0).
-  2. Itère sur les chapitres `(t0, t1)` pour **sélectionner, tronquer, décaler, renuméroter** les sous-titres.
-  3. Écrit `N` fichiers `.srt` **aux côtés** des clips vidéo, en réutilisant la **fonction de nommage** déjà utilisée pour les `.mp4`.
+- **AprÃ¨s** avoir calculÃ©/validÃ© le **planning des chapitres** et **avant/pendant** lâ€™Ã©tape de dÃ©coupe vidÃ©o, appeler un module `subtitles/slicer.py` qui :
+  1. Parse le SRT global (en appliquant `subs-offset` si â‰  0).
+  2. ItÃ¨re sur les chapitres `(t0, t1)` pour **sÃ©lectionner, tronquer, dÃ©caler, renumÃ©roter** les sous-titres.
+  3. Ã‰crit `N` fichiers `.srt` **aux cÃ´tÃ©s** des clips vidÃ©o, en rÃ©utilisant la **fonction de nommage** dÃ©jÃ  utilisÃ©e pour les `.mp4`.
 
-### 3) Schéma de nommage
+### 3) SchÃ©ma de nommage
 
-- Si la vidéo chapitre s’appelle `001 - Intro.mp4`, produire `001 - Intro.srt` **dans le même dossier**.
-- Toujours préserver un nommage **safe cross-platform** (remplacements/normalisations identiques à la vidéo).
+- Si la vidÃ©o chapitre sâ€™appelle `001 - Intro.mp4`, produire `001 - Intro.srt` **dans le mÃªme dossier**.
+- Toujours prÃ©server un nommage **safe cross-platform** (remplacements/normalisations identiques Ã  la vidÃ©o).
 
 ---
 
-## Algorithme de découpe SRT
+## Algorithme de dÃ©coupe SRT
 
-Pour chaque chapitre `[t0, t1)` (en secondes) :
+Pour chaque chapitre `[t0, t1)` (en secondes)Â :
 
 1. Convertir en `timedelta`: `T0 = td(t0)`, `T1 = td(t1)`.
-2. **Sélectionner** chaque sous-titre `(start, end, text)` du SRT global qui **chevauche** `[T0, T1)` :
-   - Condition : `end > T0` **et** `start < T1`.
-3. **Tronquer** aux bornes du chapitre :
+2. **SÃ©lectionner** chaque sous-titre `(start, end, text)` du SRT global qui **chevauche** `[T0, T1)` :
+   - ConditionÂ : `end > T0` **et** `start < T1`.
+3. **Tronquer** aux bornes du chapitreÂ :
    - `start' = max(start, T0)`
    - `end'   = min(end, T1)`
-4. **Rebaser** à 0 pour le fichier de chapitre :
+4. **Rebaser** Ã  0 pour le fichier de chapitreÂ :
    - `start'' = start' - T0`
    - `end''   = end'   - T0`
-5. **Filtrer** les entrées trop courtes après découpe (ex. `< subs-min-duration-ms`), ou forcer `end'' ≥ start'' + 300ms`.
-6. **Renuméroter** à partir de 1 et **composer** le fichier SRT.
+5. **Filtrer** les entrÃ©es trop courtes aprÃ¨s dÃ©coupe (ex. `< subs-min-duration-ms`), ou forcer `end'' â‰¥ start'' + 300ms`.
+6. **RenumÃ©roter** Ã  partir de 1 et **composer** le fichier SRT.
 
 ---
 
@@ -100,7 +100,7 @@ def slice_srt(
     text = full_srt_path.read_text(encoding=encoding)
     entries = list(srt.parse(text))
 
-    # Appliquer l'offset global si demandé
+    # Appliquer l'offset global si demandÃ©
     if abs(subs_offset) > 1e-6:
         delta = timedelta(seconds=subs_offset)
         for e in entries:
@@ -120,8 +120,8 @@ def slice_srt(
             if end < start:
                 end = start
             if (end - start).total_seconds() * 1000 < min_ms:
-                # Option: soit on skip, soit on étire au seuil minimal
-                # Ici, on étire minimalement pour éviter des timecodes inversés
+                # Option: soit on skip, soit on Ã©tire au seuil minimal
+                # Ici, on Ã©tire minimalement pour Ã©viter des timecodes inversÃ©s
                 end = start + timedelta(milliseconds=min_ms)
                 if end > (T1 - T0):
                     end = (T1 - T0)
@@ -141,31 +141,31 @@ def slice_srt(
 
 ## Gestion des erreurs & cas limites
 
-- **SRT manquant / introuvable** : warning clair, pas de génération SRT par chapitre.
-- **Décalage visible** (latence fixe) : utiliser `--subs-offset` (ex. `0.5` ou `-0.7`).
-- **Dérive très localisée** (drift) : garder simple en v1 (pas de time-warp). Documenter la limite.
-- **Chapitre trop court** : si aucun sous-titre valide après tronquage, créer un SRT **vide** (ou ignorer, selon préférence), en loggant l’info.
-- **Encodage** : lire/écrire en `utf-8` par défaut. Option `--subs-encoding` pour s’adapter.
-- **Normalisation CRLF/LF** : privilégier LF (`\n`).
+- **SRT manquant / introuvable** : warning clair, pas de gÃ©nÃ©ration SRT par chapitre.
+- **DÃ©calage visible** (latence fixe) : utiliser `--subs-offset` (ex. `0.5` ou `-0.7`).
+- **DÃ©rive trÃ¨s localisÃ©e** (drift) : garder simple en v1 (pas de time-warp). Documenter la limite.
+- **Chapitre trop court** : si aucun sous-titre valide aprÃ¨s tronquage, crÃ©er un SRT **vide** (ou ignorer, selon prÃ©fÃ©rence), en loggant lâ€™info.
+- **Encodage** : lire/Ã©crire en `utf-8` par dÃ©faut. Option `--subs-encoding` pour sâ€™adapter.
+- **Normalisation CRLF/LF** : privilÃ©gier LF (`\n`).
 
 ---
 
-## Tests (recommandés)
+## Tests (recommandÃ©s)
 
 - **Unit tests** sur `slice_srt` :
-  - Sous-titre qui **déborde** sur le début/fin de chapitre (tronquage).
+  - Sous-titre qui **dÃ©borde** sur le dÃ©but/fin de chapitre (tronquage).
   - **Chevauchements** multiples.
-  - **Chapitres courts** et filtrage/étirement minimal.
-  - **Offset** positif et négatif.
-- **Test d’intégration** :
-  - Générer un **planning** de 2–3 chapitres, **produire les SRT** par chapitre et **vérifier** :
-    - renumérotation, rebase à 0, timecodes croissants,
-    - existence et nommage alignés avec les `.mp4`,
-    - absence d’entrées hors intervalle.
+  - **Chapitres courts** et filtrage/Ã©tirement minimal.
+  - **Offset** positif et nÃ©gatif.
+- **Test dâ€™intÃ©gration** :
+  - GÃ©nÃ©rer un **planning** de 2â€“3 chapitres, **produire les SRT** par chapitre et **vÃ©rifier** :
+    - renumÃ©rotation, rebase Ã  0, timecodes croissants,
+    - existence et nommage alignÃ©s avec les `.mp4`,
+    - absence dâ€™entrÃ©es hors intervalle.
 
 ---
 
-## Exemple d’utilisation (fin de pipeline)
+## Exemple dâ€™utilisation (fin de pipeline)
 
 ```bash
 ytsplit   --url "https://www.youtube.com/watch?v=XXXX"   --work-dir "./out"   --use-chapters true   --subs-from "./subs/global_validated.srt"
@@ -174,23 +174,23 @@ ytsplit   --url "https://www.youtube.com/watch?v=XXXX"   --work-dir "./out"   --
 
 ---
 
-## Roadmap légère (optionnelle)
+## Roadmap lÃ©gÃ¨re (optionnelle)
 
-- Détection automatique du SRT global si présent dans le dossier de travail (convention de nommage).
-- Ajout d’un **manifeste JSON** final listant, pour chaque chapitre : nom du clip, bornes, chemin du `.srt`.
-- Option future (non activée par défaut) : fallback vers ASR si SRT global absent (mais **pas** dans cette intégration rapide).
-
----
-
-**Résumé** : on **réutilise le SRT global validé** et on l’**alimente** dans un **slicer SRT** intégré au splitter. C’est simple, robuste et performant : **0 re-transcription**, une seule source d’alignement (le SRT validé), des fichiers `.srt` par chapitre prêts à être consommés.
+- DÃ©tection automatique du SRT global si prÃ©sent dans le dossier de travail (convention de nommage).
+- Ajout dâ€™un **manifeste JSON** final listant, pour chaque chapitre : nom du clip, bornes, chemin du `.srt`.
+- Option future (non activÃ©e par dÃ©faut) : fallback vers ASR si SRT global absent (mais **pas** dans cette intÃ©gration rapide).
 
 ---
-## Mise � jour � Workflow manuel conseill� (sans t�l�chargement auto)
-- Le splitter privil�gie d�sormais un flux manuel simple pour les sous-titres.
-- Deux usages recommand�s:
-  - `--subs-from PATH` pour fournir explicitement le SRT global valid�.
-  - D�poser un fichier SRT/VTT nomm� avec l�ID vid�o dans `./custom/` (ou dans `cache/`).
-- La recherche locale (par ID) est effectu�e automatiquement avant toute tentative r�seau.
+
+**RÃ©sumÃ©** : on **rÃ©utilise le SRT global validÃ©** et on lâ€™**alimente** dans un **slicer SRT** intÃ©grÃ© au splitter. Câ€™est simple, robuste et performant : **0 re-transcription**, une seule source dâ€™alignement (le SRT validÃ©), des fichiers `.srt` par chapitre prÃªts Ã  Ãªtre consommÃ©s.
+
+---
+## Mise à jour – Workflow manuel conseillé (sans téléchargement auto)
+- Le splitter privilégie désormais un flux manuel simple pour les sous-titres.
+- Deux usages recommandés:
+  - `--subs-from PATH` pour fournir explicitement le SRT global validé.
+  - Déposer un fichier SRT/VTT nommé avec l’ID vidéo dans `./custom/` (ou dans `cache/`).
+- La recherche locale (par ID) est effectuée automatiquement avant toute tentative réseau.
 
 Exemple:
 ```bash
@@ -200,4 +200,10 @@ python -m ytsplit.cli split "https://www.youtube.com/watch?v=XXXX" \
   --subs-offset 0.0
 ```
 
-Si `--subs-from` n�est pas fourni, placez `./custom/XXXX.srt` (ou `.en.srt`) et lancez simplement la commande `split`.
+Si `--subs-from` n’est pas fourni, placez `./custom/XXXX.srt` (ou `.en.srt`) et lancez simplement la commande `split`.
+
+Vous pouvez aussi utiliser un nom de fichier « riche » incluant le titre, tant que la fin du nom respecte le suffixe `-VIDEO_ID.*.srt|vtt`. Exemple:
+
+```
+custom/REPORT COURSE - Session 4-6 (EMEA  America)-8JFMiIlSdlg.en.srt
+```
