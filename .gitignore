@@ -146,3 +146,12 @@ logs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Local secrets/tokens and user content
+token.json
+client_secret.json
+cookies.txt
+debug_work/
+test_work/
+custom/
+nul

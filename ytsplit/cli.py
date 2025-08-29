@@ -1,7 +1,8 @@
-"""Interface ligne de commande pour YouTube Chapter Splitter."""
+﻿"""Interface ligne de commande pour YouTube Chapter Splitter."""
 
 from pathlib import Path
 from typing import List, Optional, Annotated
+import subprocess
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -13,11 +14,12 @@ from .models import VideoMeta, ProcessingStats, SplitResult
 from .providers.youtube import create_youtube_provider, YouTubeError
 from .planning.plan import create_split_planner, PlanningError
 from .cutting.ffmpeg import create_ffmpeg_cutter, FFmpegError
+from .subtitles import SubtitleDownloader, SubtitleSlicer, create_subtitle_parser
 
 # Configuration Typer
 app = typer.Typer(
     name="ytsplit",
-    help="YouTube Chapter Splitter - Découpe précis de vidéos YouTube par chapitre",
+    help="YouTube Chapter Splitter - DÃ©coupe prÃ©cis de vidÃ©os YouTube par chapitre",
     add_completion=False,
     rich_markup_mode="rich"
 )
@@ -35,15 +37,15 @@ def version_callback(show_version: bool):
 
 @app.command()
 def split(
-    urls: Annotated[List[str], typer.Argument(help="URL(s) YouTube à traiter")],
+    urls: Annotated[List[str], typer.Argument(help="URL(s) YouTube Ã  traiter")],
     
     # Options de sortie
-    out: Annotated[Optional[Path], typer.Option("--out", "-o", help="Répertoire de sortie")] = None,
-    work: Annotated[Optional[Path], typer.Option("--work", "-w", help="Répertoire de travail temporaire")] = None,
+    out: Annotated[Optional[Path], typer.Option("--out", "-o", help="RÃ©pertoire de sortie")] = None,
+    work: Annotated[Optional[Path], typer.Option("--work", "-w", help="RÃ©pertoire de travail temporaire")] = None,
     
-    # Options de qualité
-    quality: Annotated[Optional[str], typer.Option("--quality", "-q", help="Qualité vidéo (ex: 1080p, 720p)")] = None,
-    crf: Annotated[Optional[int], typer.Option("--crf", help="Facteur de qualité x264 (0-51, défaut: 18)")] = None,
+    # Options de qualitÃ©
+    quality: Annotated[Optional[str], typer.Option("--quality", "-q", help="QualitÃ© vidÃ©o (ex: 1080p, 720p)")] = None,
+    crf: Annotated[Optional[int], typer.Option("--crf", help="Facteur de qualitÃ© x264 (0-51, dÃ©faut: 18)")] = None,
     preset: Annotated[Optional[str], typer.Option("--preset", help="Preset d'encodage x264")] = None,
     audio_bitrate: Annotated[Optional[str], typer.Option("--audio-bitrate", help="Bitrate audio (ex: 192k)")] = None,
     
@@ -54,21 +56,36 @@ def split(
     export_manifest: Annotated[Optional[str], typer.Option("--export-manifest", help="Formats de manifest (json,csv,md)")] = None,
     
     # Options de traitement
-    max_parallel: Annotated[Optional[int], typer.Option("--max-parallel", help="Nombre de processus FFmpeg parallèles")] = None,
-    tolerance: Annotated[Optional[float], typer.Option("--tolerance", help="Tolérance de durée en secondes")] = None,
+    max_parallel: Annotated[Optional[int], typer.Option("--max-parallel", help="Nombre de processus FFmpeg parallÃ¨les")] = None,
+    tolerance: Annotated[Optional[float], typer.Option("--tolerance", help="TolÃ©rance de durÃ©e en secondes")] = None,
     
     # Options de recadrage
-    crop_top: Annotated[Optional[int], typer.Option("--crop-top", help="Pixels à rogner en haut")] = None,
-    crop_bottom: Annotated[Optional[int], typer.Option("--crop-bottom", help="Pixels à rogner en bas (ex: 40 pour barre des tâches)")] = None,
-    crop_left: Annotated[Optional[int], typer.Option("--crop-left", help="Pixels à rogner à gauche")] = None,
-    crop_right: Annotated[Optional[int], typer.Option("--crop-right", help="Pixels à rogner à droite")] = None,
+    crop_top: Annotated[Optional[int], typer.Option("--crop-top", help="Pixels Ã  rogner en haut")] = None,
+    crop_bottom: Annotated[Optional[int], typer.Option("--crop-bottom", help="Pixels Ã  rogner en bas (ex: 40 pour barre des tÃ¢ches)")] = None,
+    crop_left: Annotated[Optional[int], typer.Option("--crop-left", help="Pixels Ã  rogner Ã  gauche")] = None,
+    crop_right: Annotated[Optional[int], typer.Option("--crop-right", help="Pixels Ã  rogner Ã  droite")] = None,
+    
+    # Options GPU NVIDIA
+    gpu: Annotated[bool, typer.Option("--gpu", help="Activer l'accÃ©lÃ©ration GPU NVIDIA (NVENC)")] = False,
+    gpu_encoder: Annotated[Optional[str], typer.Option("--gpu-encoder", help="Encodeur GPU (h264_nvenc, hevc_nvenc)")] = None,
+    gpu_preset: Annotated[Optional[str], typer.Option("--gpu-preset", help="Preset GPU (p1=rapide, p7=qualitÃ©, dÃ©faut p7)")] = None,
+    gpu_cq: Annotated[Optional[int], typer.Option("--gpu-cq", help="Constant Quality GPU (0-51, dÃ©faut 18)")] = None,
+    
+    # Options de sous-titres
+    subtitles: Annotated[bool, typer.Option("--subtitles", help="Forcer l'activation des sous-titres (activÃ© par dÃ©faut)")] = False,
+    no_subtitles: Annotated[bool, typer.Option("--no-subtitles", help="DÃ©sactiver complÃ¨tement le traitement des sous-titres")] = False,
+    subtitles_file: Annotated[Optional[Path], typer.Option("--subtitles-file", "--subs-from", help="Fichier SRT/VTT externe Ã  utiliser (--subs-from est l'alias pour compatibilitÃ©)")] = None,
+    subtitles_languages: Annotated[Optional[str], typer.Option("--subtitles-languages", help="Langues prioritaires sÃ©parÃ©es par des virgules (ex: fr,en)")] = None,
+    subtitles_offset: Annotated[Optional[float], typer.Option("--subtitles-offset", "--subs-offset", help="Offset temporel en secondes (ex: 0.5, -1.2)")] = None,
+    subtitles_min_duration: Annotated[Optional[int], typer.Option("--subtitles-min-duration", "--subs-min-duration-ms", help="DurÃ©e minimale des sous-titres en ms (dÃ©faut: 300)")] = None,
+    subtitles_encoding: Annotated[Optional[str], typer.Option("--subtitles-encoding", "--subs-encoding", help="Encodage du fichier SRT (dÃ©faut: utf-8)")] = None,
     
     # Options de configuration
     config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Fichier de configuration YAML")] = None,
     
     # Flags
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Mode simulation (ne découpe pas)")] = False,
-    keep_source: Annotated[bool, typer.Option("--keep-source/--no-keep-source", help="Conserver les fichiers source")] = True,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Mode simulation (ne dÃ©coupe pas)")] = False,
+    keep_source: Annotated[bool, typer.Option("--keep-source/--no-keep-source", help="Conserver les fichiers source (supprimÃ©s par dÃ©faut)")] = False,
     skip_existing: Annotated[bool, typer.Option("--skip-existing/--no-skip-existing", help="Ignorer les fichiers existants")] = True,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Mode verbeux")] = False,
     
@@ -76,22 +93,38 @@ def split(
     version: Annotated[bool, typer.Option("--version", callback=version_callback, help="Afficher la version")] = False,
 ):
     """
-    Découpe une ou plusieurs vidéos YouTube en chapitres individuels.
+    DÃ©coupe une ou plusieurs vidÃ©os YouTube en chapitres individuels.
     
-    Télécharge la vidéo, extrait les chapitres (depuis les métadonnées YouTube ou 
-    la description), puis découpe chaque chapitre en fichier séparé avec une 
-    précision au niveau de la frame.
+    TÃ©lÃ©charge la vidÃ©o, extrait les chapitres (depuis les mÃ©tadonnÃ©es YouTube ou 
+    la description), puis dÃ©coupe chaque chapitre en fichier sÃ©parÃ© avec une 
+    prÃ©cision au niveau de la frame. Les sous-titres sont automatiquement dÃ©coupÃ©s
+    par chapitre et placÃ©s dans le mÃªme dossier que les vidÃ©os correspondantes.
+    
+    La vidÃ©o source est automatiquement supprimÃ©e aprÃ¨s le dÃ©coupage pour Ã©conomiser
+    l'espace disque. Utilisez --keep-source pour la conserver.
     
     Exemples:
     
-        # Découpage simple
+        # DÃ©coupage simple (vidÃ©os + sous-titres automatiquement)
         ytsplit "https://www.youtube.com/watch?v=VIDEO_ID"
         
-        # Plusieurs vidéos avec options personnalisées
+        # Avec fichier SRT externe (intÃ©gration rapide)
+        ytsplit "URL" --subs-from "./mes_sous_titres.srt"
+        
+        # Sans sous-titres du tout
+        ytsplit "URL" --no-subtitles
+        
+        # Plusieurs vidÃ©os avec options personnalisÃ©es
         ytsplit url1 url2 --out ./mes_videos --quality 720p --crf 20
         
-        # Mode simulation pour vérifier le plan de découpage
-        ytsplit "URL" --dry-run
+        # Options avancÃ©es sous-titres
+        ytsplit "URL" --subtitles --subtitles-offset 0.5 --subtitles-languages fr,en
+        
+        # Utilisation avec SRT global validÃ© (intÃ©gration rapide)
+        ytsplit "URL" --subs-from ./global_validated.srt --subs-offset 0.0
+        
+        # Mode simulation pour vÃ©rifier le plan
+        ytsplit "URL" --dry-run --subtitles
     """
     
     # Charger la configuration
@@ -134,6 +167,42 @@ def split(
         if crop_right is not None:
             settings.crop.right = crop_right
     
+    # Appliquer les options GPU
+    if gpu:
+        settings.gpu.enabled = True
+        if gpu_encoder is not None:
+            settings.gpu.encoder = gpu_encoder
+        if gpu_preset is not None:
+            settings.gpu.preset = gpu_preset
+        if gpu_cq is not None:
+            settings.gpu.cq = gpu_cq
+    
+    # Appliquer les options de sous-titres
+    if no_subtitles:
+        # DÃ©sactiver complÃ¨tement les sous-titres si demandÃ©
+        settings.subtitles.enabled = False
+    else:
+        # Activer par dÃ©faut les sous-titres
+        settings.subtitles.enabled = True
+        
+        # Si un fichier SRT externe est fourni, l'utiliser
+        if subtitles_file is not None:
+            settings.subtitles.external_srt_path = subtitles_file
+            settings.subtitles.auto_download = False  # Utilise fichier externe au lieu du tÃ©lÃ©chargement
+        else:
+            # Utiliser le tÃ©lÃ©chargement automatique des sous-titres YouTube
+            settings.subtitles.auto_download = False
+        
+        # Appliquer les autres options de sous-titres
+        if subtitles_languages is not None:
+            settings.subtitles.languages = [lang.strip() for lang in subtitles_languages.split(',')]
+        if subtitles_offset is not None:
+            settings.subtitles.offset_s = subtitles_offset
+        if subtitles_min_duration is not None:
+            settings.subtitles.min_duration_ms = subtitles_min_duration
+        if subtitles_encoding is not None:
+            settings.subtitles.encoding = subtitles_encoding
+    
     # Affichage de la configuration si mode verbeux
     if settings.verbose:
         show_configuration(settings)
@@ -141,9 +210,9 @@ def split(
     # Validation des URLs
     validated_urls = validate_youtube_urls(urls)
     
-    console.print(f"\n[bold blue]>>> Traitement de {len(validated_urls)} vidéo(s)[/bold blue]\n")
+    console.print(f"\n[bold blue]>>> Traitement de {len(validated_urls)} vidÃ©o(s)[/bold blue]\n")
     
-    # Traitement des vidéos
+    # Traitement des vidÃ©os
     all_stats = ProcessingStats(
         total_chapters=0,
         successful_chapters=0,
@@ -158,7 +227,7 @@ def split(
         try:
             stats = process_single_video(url, settings)
             
-            # Mise à jour des statistiques globales
+            # Mise Ã  jour des statistiques globales
             all_stats.total_chapters += stats.total_chapters
             all_stats.successful_chapters += stats.successful_chapters
             all_stats.failed_chapters += stats.failed_chapters
@@ -175,34 +244,34 @@ def split(
 
 @app.command()
 def config_init(
-    path: Annotated[Path, typer.Argument(help="Chemin du fichier de configuration à créer")] = Path("settings.yaml"),
-    force: Annotated[bool, typer.Option("--force", help="Écraser le fichier existant")] = False
+    path: Annotated[Path, typer.Argument(help="Chemin du fichier de configuration Ã  crÃ©er")] = Path("settings.yaml"),
+    force: Annotated[bool, typer.Option("--force", help="Ã‰craser le fichier existant")] = False
 ):
-    """Génère un fichier de configuration par défaut."""
+    """GÃ©nÃ¨re un fichier de configuration par dÃ©faut."""
     
     if path.exists() and not force:
-        console.print(f"[yellow]⚠️  Le fichier {path} existe déjà. Utilisez --force pour l'écraser.[/yellow]")
+        console.print(f"[yellow]! Le fichier {path} existe dÃ©jÃ . Utilisez --force pour l'Ã©craser.[/yellow]")
         raise typer.Exit(1)
     
     settings = Settings()
     
     try:
         settings.save_to_file(path)
-        console.print(f"[green]✅ Configuration par défaut créée: {path}[/green]")
+        console.print(f"[green]âœ… Configuration par dÃ©faut crÃ©Ã©e: {path}[/green]")
         
-        # Afficher un aperçu de la configuration
-        console.print("\n[bold]Aperçu de la configuration:[/bold]")
+        # Afficher un aperÃ§u de la configuration
+        console.print("\n[bold]AperÃ§u de la configuration:[/bold]")
         show_configuration(settings, show_title=False)
         
     except Exception as e:
-        console.print(f"[bold red]❌ Erreur lors de la création du fichier:[/bold red] {str(e)}")
+        console.print(f"[bold red]âŒ Erreur lors de la crÃ©ation du fichier:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
 
 def load_settings(config_path: Optional[Path], overrides: dict) -> Settings:
-    """Charge les paramètres depuis fichier et overrides CLI."""
+    """Charge les paramÃ¨tres depuis fichier et overrides CLI."""
     
-    # Charger depuis fichier si spécifié
+    # Charger depuis fichier si spÃ©cifiÃ©
     if config_path and config_path.exists():
         settings = Settings.load_from_file(config_path)
     else:
@@ -231,32 +300,32 @@ def validate_youtube_urls(urls: List[str]) -> List[str]:
         if any(re.match(pattern, url) for pattern in youtube_patterns):
             validated.append(url)
         else:
-            console.print(f"[yellow]⚠️  URL ignorée (pas YouTube): {url}[/yellow]")
+            console.print(f"[yellow]! URL ignorÃ©e (pas YouTube): {url}[/yellow]")
     
     if not validated:
-        console.print("[bold red]❌ Aucune URL YouTube valide fournie[/bold red]")
+        console.print("[bold red]âŒ Aucune URL YouTube valide fournie[/bold red]")
         raise typer.Exit(1)
     
     return validated
 
 
 def process_single_video(url: str, settings: Settings) -> ProcessingStats:
-    """Traite une seule vidéo et retourne les statistiques."""
+    """Traite une seule vidÃ©o et retourne les statistiques."""
     import time
     start_time = time.time()
     
     try:
-        # Créer le provider YouTube
+        # CrÃ©er le provider YouTube
         provider = create_youtube_provider(settings)
         
-        console.print("  > Extraction des métadonnées...")
+        console.print("  > Extraction des mÃ©tadonnÃ©es...")
         
-        # Extraire les métadonnées
+        # Extraire les mÃ©tadonnÃ©es
         meta = provider.get_video_info(url)
         
-        console.print(f"  > Vidéo: [bold]{meta.title}[/bold]")
-        console.print(f"  > Durée: {meta.duration_s / 60:.1f} minutes")
-        console.print(f"  > {len(meta.chapters)} chapitre(s) détecté(s)")
+        console.print(f"  > VidÃ©o: [bold]{meta.title}[/bold]")
+        console.print(f"  > DurÃ©e: {meta.duration_s / 60:.1f} minutes")
+        console.print(f"  > {len(meta.chapters)} chapitre(s) dÃ©tectÃ©(s)")
         
         # Afficher les chapitres
         for chapter in meta.chapters:
@@ -264,34 +333,99 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
             console.print(f"     {chapter.index:2d}. {chapter.title} ({duration:.1f}s)")
         
         if settings.dry_run:
-            console.print("  [yellow]> Mode simulation - pas de téléchargement ni de découpage[/yellow]")
+            console.print("  [yellow]> Mode simulation - pas de tÃ©lÃ©chargement ni de dÃ©coupage[/yellow]")
             processing_time = time.time() - start_time
             
             return ProcessingStats(
                 total_chapters=len(meta.chapters),
-                successful_chapters=len(meta.chapters),  # Considéré comme réussi en simulation
+                successful_chapters=len(meta.chapters),  # ConsidÃ©rÃ© comme rÃ©ussi en simulation
                 failed_chapters=0,
                 total_duration_s=meta.duration_s,
                 total_processing_time_s=processing_time
             )
         
-        # Téléchargement (si pas en mode dry_run)
-        console.print("  > Vérification du cache...")
+        # TÃ©lÃ©chargement (si pas en mode dry_run)
+        console.print("  > VÃ©rification du cache...")
         existing_file = provider.get_video_file_path(meta.video_id)
         
         if existing_file and settings.skip_existing:
-            console.print(f"  > Fichier déjà en cache: {existing_file.name}")
+            console.print(f"  > Fichier dÃ©jÃ  en cache: {existing_file.name}")
             video_file = existing_file
         else:
-            console.print("  > Téléchargement en cours... (cela peut prendre quelques minutes)")
+            console.print("  > TÃ©lÃ©chargement en cours... (cela peut prendre quelques minutes)")
             video_file = provider.download_video(url)
-            console.print("  > Téléchargement terminé")
+            console.print("  > TÃ©lÃ©chargement terminÃ©")
             
-            console.print(f"  > Fichier téléchargé: {video_file.name}")
+            console.print(f"  > Fichier tÃ©lÃ©chargÃ©: {video_file.name}")
             console.print(f"    Taille: {video_file.stat().st_size / 1024 / 1024:.1f} MB")
         
-        # Planification du découpage
-        console.print("  > Planification du découpage...")
+        # Traitement des sous-titres
+        subtitle_file = None
+        if settings.subtitles.enabled:
+            console.print("  > Traitement des sous-titres...")
+            
+            try:
+                # CrÃ©er le downloader de sous-titres
+                subtitle_downloader = SubtitleDownloader(settings.subtitles, provider)
+                
+                # RÃ©cupÃ©rer le fichier de sous-titres
+                subtitle_file = subtitle_downloader.get_subtitle_file(url, meta.video_id, settings.work_dir)
+                
+                if subtitle_file:
+                    console.print(f"    > Sous-titres trouvÃ©s: {subtitle_file.language or 'langue inconnue'}")
+                    console.print(f"    Format: {subtitle_file.format}, {subtitle_file.entry_count} entrÃ©es")
+                    
+                    # Valider la synchronisation
+                    if subtitle_downloader.validate_subtitle_sync(subtitle_file, meta.duration_s):
+                        console.print("    > Synchronisation validÃ©e")
+                    else:
+                        console.print("    [yellow]! Attention: synchronisation douteuse[/yellow]")
+                else:
+                    console.print("    [yellow]! Aucun sous-titre disponible[/yellow]")
+                    # Logs d'aide au diagnostic
+                    try:
+                        available = subtitle_downloader.list_available_subtitles(url)
+                        if available:
+                            langs = ", ".join(sorted(available.keys()))
+                            console.print(f"    > Sous-titres dÃ©tectÃ©s (yt-dlp): {langs}")
+                        # Afficher la derniÃ¨re erreur/commande yt-dlp si dispo (provider)
+                        if hasattr(provider, 'last_ytdlp_error') and provider.last_ytdlp_error:
+                            console.print("    > DÃ©tail yt-dlp:")
+                            console.print(Panel(str(provider.last_ytdlp_error)[:2000], title="yt-dlp stderr", subtitle="tronquÃ©"))
+                        if hasattr(provider, 'last_ytdlp_command') and provider.last_ytdlp_command:
+                            console.print(f"    > DerniÃ¨re commande yt-dlp: {' '.join(provider.last_ytdlp_command)}")
+                        # Diagnostic direct: essayer `yt-dlp --list-subs` et afficher sortie
+                        console.print("    > Diagnostic list-subs (brut)")
+                        diag_cmds = []
+                        cookies_file = Path('cookies.txt')
+                        if cookies_file.exists():
+                            diag_cmds.append(["yt-dlp", "--list-subs", "--no-warnings", "--cookies", str(cookies_file), url])
+                        for b in ["firefox", "chrome", "edge"]:
+                            diag_cmds.append(["yt-dlp", "--list-subs", "--no-warnings", "--cookies-from-browser", b, url])
+                        diag_cmds.append(["yt-dlp", "--list-subs", "--no-warnings", url])
+                        shown = 0
+                        for dc in diag_cmds:
+                            try:
+                                r = subprocess.run(dc, capture_output=True, text=True, timeout=30)
+                                console.print(f"      $ {' '.join(dc)} -> rc={r.returncode}")
+                                if r.stdout:
+                                    console.print(Panel(r.stdout[:1200] if len(r.stdout) > 1200 else r.stdout, title="yt-dlp stdout", subtitle="tronquÃ©" if len(r.stdout) > 1200 else ""))
+                                if r.stderr:
+                                    console.print(Panel(r.stderr[:1200] if len(r.stderr) > 1200 else r.stderr, title="yt-dlp stderr", subtitle="tronquÃ©" if len(r.stderr) > 1200 else ""))
+                                shown += 1
+                                if shown >= 2:  # Ã©viter de trop inonder
+                                    break
+                            except Exception as _:
+                                continue
+                    except Exception as _:
+                        pass
+                    
+            except Exception as e:
+                console.print(f"    [yellow]! Erreur sous-titres (non critique): {e}[/yellow]")
+                subtitle_file = None
+        
+        # Planification du dÃ©coupage
+        console.print("  > Planification du dÃ©coupage...")
         planner = create_split_planner(settings)
         
         try:
@@ -312,10 +446,10 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
         to_process, existing = planner.filter_existing_files(split_plan)
         
         if existing:
-            console.print(f"  > {len(existing)} chapitre(s) déjà traité(s) et valide(s)")
+            console.print(f"  > {len(existing)} chapitre(s) dÃ©jÃ  traitÃ©(s) et valide(s)")
         
         if not to_process:
-            console.print("  > Tous les chapitres sont déjà traités")
+            console.print("  > Tous les chapitres sont dÃ©jÃ  traitÃ©s")
             processing_time = time.time() - start_time
             
             return ProcessingStats(
@@ -326,28 +460,28 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
                 total_processing_time_s=processing_time
             )
         
-        console.print(f"  > {len(to_process)} chapitre(s) à traiter")
+        console.print(f"  > {len(to_process)} chapitre(s) Ã  traiter")
         
         # Estimation du temps de traitement
         estimates = planner.estimate_processing_time(to_process)
         estimated_minutes = estimates["estimated_processing_time"] / 60
-        console.print(f"  > Temps estimé: {estimated_minutes:.1f} minutes")
+        console.print(f"  > Temps estimÃ©: {estimated_minutes:.1f} minutes")
         
-        # Découpage avec FFmpeg
-        console.print("  > Découpage en cours...")
+        # DÃ©coupage avec FFmpeg
+        console.print("  > DÃ©coupage en cours...")
         cutter = create_ffmpeg_cutter(settings)
         
         results = []
         successful = 0
         failed = 0
         
-        # Progress bar pour le découpage
+        # Progress bar pour le dÃ©coupage
         with Progress(
             TextColumn("[progress.description]{task.description}"),
             console=console,
             expand=True
         ) as progress:
-            task = progress.add_task("Découpage des chapitres", total=len(to_process))
+            task = progress.add_task("DÃ©coupage des chapitres", total=len(to_process))
             
             for plan_item in to_process:
                 try:
@@ -374,11 +508,44 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
         # Ajouter les fichiers existants aux stats
         successful += len(existing)
         
-        # Nettoyage du fichier source si demandé
+        # DÃ©coupage des sous-titres
+        if settings.subtitles.enabled and subtitle_file:
+            console.print("  > DÃ©coupage des sous-titres par chapitre...")
+            
+            try:
+                # CrÃ©er le slicer de sous-titres
+                subtitle_slicer = SubtitleSlicer(settings.subtitles)
+                
+                # DÃ©terminer le rÃ©pertoire de sortie (mÃªme que les vidÃ©os)
+                video_output_dir = split_plan[0].output_path.parent if split_plan else settings.out_dir
+                
+                # DÃ©couper les sous-titres par chapitre
+                subtitle_results = subtitle_slicer.slice_subtitles(
+                    subtitle_file,
+                    meta.chapters,
+                    video_output_dir,
+                    settings.naming.template
+                )
+                
+                # Afficher les rÃ©sultats
+                successful_subs = sum(1 for r in subtitle_results if r.status == "OK")
+                empty_subs = sum(1 for r in subtitle_results if r.status == "EMPTY")
+                failed_subs = sum(1 for r in subtitle_results if r.status == "ERROR")
+                
+                console.print(f"    > {successful_subs} fichier(s) SRT crÃ©Ã©s")
+                if empty_subs > 0:
+                    console.print(f"    - {empty_subs} chapitre(s) sans sous-titres")
+                if failed_subs > 0:
+                    console.print(f"    [yellow]- {failed_subs} chapitre(s) en erreur[/yellow]")
+                    
+            except Exception as e:
+                console.print(f"    [yellow]! Erreur dÃ©coupage sous-titres (non critique): {e}[/yellow]")
+        
+        # Nettoyage du fichier source si demandÃ©
         if not settings.keep_source:
             try:
                 video_file.unlink()
-                console.print("  > Fichier source supprimé")
+                console.print("  > Fichier source supprimÃ©")
             except Exception as e:
                 console.print(f"  [yellow]> Impossible de supprimer le fichier source: {e}[/yellow]")
         
@@ -436,18 +603,18 @@ def show_configuration(settings: Settings, show_title: bool = True) -> None:
         console.print("\n[bold blue]>>> Configuration:[/bold blue]")
     
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Paramètre", style="cyan", no_wrap=True)
+    table.add_column("ParamÃ¨tre", style="cyan", no_wrap=True)
     table.add_column("Valeur", style="green")
     
-    # Paramètres principaux
-    table.add_row("Répertoire de sortie", str(settings.out_dir))
-    table.add_row("Répertoire de travail", str(settings.work_dir))
-    table.add_row("Qualité", settings.quality)
-    table.add_row("CRF (qualité)", str(settings.x264.crf))
+    # ParamÃ¨tres principaux
+    table.add_row("RÃ©pertoire de sortie", str(settings.out_dir))
+    table.add_row("RÃ©pertoire de travail", str(settings.work_dir))
+    table.add_row("QualitÃ©", settings.quality)
+    table.add_row("CRF (qualitÃ©)", str(settings.x264.crf))
     table.add_row("Preset", settings.x264.preset)
     table.add_row("Bitrate audio", settings.audio.bitrate)
-    table.add_row("Processus parallèles", str(settings.parallel.max_workers))
-    table.add_row("Tolérance durée", f"{settings.validation.tolerance_seconds}s")
+    table.add_row("Processus parallÃ¨les", str(settings.parallel.max_workers))
+    table.add_row("TolÃ©rance durÃ©e", f"{settings.validation.tolerance_seconds}s")
     
     console.print(table)
 
@@ -455,26 +622,27 @@ def show_configuration(settings: Settings, show_title: bool = True) -> None:
 def show_final_stats(stats: ProcessingStats) -> None:
     """Affiche les statistiques finales."""
     
-    console.print(f"\n[bold blue]>>> Résultats finaux:[/bold blue]")
+    console.print(f"\n[bold blue]>>> RÃ©sultats finaux:[/bold blue]")
     
     # Panneau principal avec les stats
     stats_content = f"""
-[green]OK  Chapitres réussis:[/green] {stats.successful_chapters}
-[red]ERR Chapitres échoués:[/red] {stats.failed_chapters}
-[blue]%   Taux de réussite:[/blue] {stats.success_rate:.1f}%
-[yellow]T   Durée totale:[/yellow] {stats.total_duration_s:.1f}s
+[green]OK  Chapitres rÃ©ussis:[/green] {stats.successful_chapters}
+[red]ERR Chapitres Ã©chouÃ©s:[/red] {stats.failed_chapters}
+[blue]%   Taux de rÃ©ussite:[/blue] {stats.success_rate:.1f}%
+[yellow]T   DurÃ©e totale:[/yellow] {stats.total_duration_s:.1f}s
 [cyan]P   Temps de traitement:[/cyan] {stats.total_processing_time_s:.1f}s
     """.strip()
     
     console.print(Panel(stats_content, title="Statistiques", border_style="blue"))
     
     if stats.total_chapters == 0:
-        console.print("[yellow]! Aucun chapitre traité[/yellow]")
+        console.print("[yellow]! Aucun chapitre traitÃ©[/yellow]")
     elif stats.success_rate == 100.0:
-        console.print("[bold green]*** Tous les chapitres ont été traités avec succès ![/bold green]")
+        console.print("[bold green]*** Tous les chapitres ont Ã©tÃ© traitÃ©s avec succÃ¨s ![/bold green]")
     elif stats.failed_chapters > 0:
-        console.print(f"[yellow]! {stats.failed_chapters} chapitre(s) en erreur. Vérifiez les logs.[/yellow]")
+        console.print(f"[yellow]! {stats.failed_chapters} chapitre(s) en erreur. VÃ©rifiez les logs.[/yellow]")
 
 
 if __name__ == "__main__":
     app()
+

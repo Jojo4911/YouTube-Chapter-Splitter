@@ -4,5 +4,6 @@ pydantic-settings>=2.0.0
 rich>=13.0.0
 yt-dlp>=2023.7.6
 PyYAML>=6.0.0
+srt>=3.5.0
 pathlib
 pytest>=7.0.0

@@ -9,7 +9,14 @@
       "Bash(git push:*)",
       "Bash(yt-dlp:*)",
       "Bash(ffmpeg:*)",
-      "Bash(ffprobe:*)"
+      "Bash(ffprobe:*)",
+      "Bash(pip install:*)",
+      "Bash(py -3.10 -m pip install -r requirements.txt)",
+      "Bash(py -3.10 -m ytsplit split --help)",
+      "Bash(py -3.10 test_new_behavior.py)",
+      "Bash(del test_new_behavior.py)",
+      "Bash(py:*)",
+      "Bash(del test_simple.en-US.vtt)"
     ],
     "deny": [],
     "ask": []

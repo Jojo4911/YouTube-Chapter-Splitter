@@ -385,3 +385,257 @@ class TestFFmpegCrop:
         crop_filter = cutter_with_crop._build_crop_filter(source_path)
         
         assert crop_filter is None  # Doit gérer l'erreur gracieusement
+
+
+class TestFFmpegGPU:
+    """Tests pour les fonctionnalités GPU."""
+    
+    @pytest.fixture
+    def settings_with_gpu(self):
+        """Settings avec GPU activé."""
+        return Settings(
+            gpu={'enabled': True, 'encoder': 'h264_nvenc', 'preset': 'p7', 'cq': 18}
+        )
+    
+    @pytest.fixture
+    def cutter_with_gpu(self, settings_with_gpu):
+        """Cutter avec GPU activé."""
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            return FFmpegCutter(settings_with_gpu)
+    
+    @pytest.fixture
+    def plan_item(self, tmp_path):
+        """Item de plan de test."""
+        return SplitPlanItem(
+            video_id="test123",
+            chapter_index=1,
+            chapter_title="Test Chapter",
+            start_s=10.0,
+            end_s=70.0,
+            expected_duration_s=60.0,
+            output_path=tmp_path / "01 - Test Chapter.mp4"
+        )
+    
+    @patch('subprocess.run')
+    def test_check_nvenc_availability_success(self, mock_run):
+        """Test de détection NVENC disponible."""
+        from ytsplit.cutting.ffmpeg import check_nvenc_availability
+        
+        # Simuler ffmpeg avec NVENC disponible
+        mock_run.return_value = Mock(
+            returncode=0, 
+            stdout="V..... h264_nvenc         NVIDIA NVENC H.264 encoder"
+        )
+        
+        result = check_nvenc_availability()
+        
+        assert result == True
+        mock_run.assert_called_once_with([
+            "ffmpeg", "-hide_banner", "-encoders"
+        ], capture_output=True, text=True, timeout=10)
+    
+    @patch('subprocess.run')
+    def test_check_nvenc_availability_not_found(self, mock_run):
+        """Test NVENC non disponible."""
+        from ytsplit.cutting.ffmpeg import check_nvenc_availability
+        
+        # Simuler ffmpeg sans NVENC
+        mock_run.return_value = Mock(
+            returncode=0,
+            stdout="V..... libx264           libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"
+        )
+        
+        result = check_nvenc_availability()
+        
+        assert result == False
+    
+    @patch('subprocess.run')
+    def test_check_nvenc_availability_ffmpeg_error(self, mock_run):
+        """Test erreur FFmpeg lors de la détection NVENC."""
+        from ytsplit.cutting.ffmpeg import check_nvenc_availability
+        
+        mock_run.return_value = Mock(returncode=1)
+        
+        result = check_nvenc_availability()
+        
+        assert result == False
+    
+    @patch('subprocess.run')
+    def test_check_nvenc_availability_timeout(self, mock_run):
+        """Test timeout lors de la détection NVENC."""
+        from ytsplit.cutting.ffmpeg import check_nvenc_availability
+        
+        mock_run.side_effect = subprocess.TimeoutExpired("ffmpeg", 10)
+        
+        result = check_nvenc_availability()
+        
+        assert result == False
+    
+    @patch('subprocess.run')
+    def test_check_nvenc_availability_file_not_found(self, mock_run):
+        """Test FFmpeg non trouvé."""
+        from ytsplit.cutting.ffmpeg import check_nvenc_availability
+        
+        mock_run.side_effect = FileNotFoundError("ffmpeg not found")
+        
+        result = check_nvenc_availability()
+        
+        assert result == False
+    
+    def test_check_gpu_compatibility_disabled(self):
+        """Test compatibilité GPU désactivée."""
+        from ytsplit.cutting.ffmpeg import check_gpu_compatibility
+        
+        settings = Settings(gpu={'enabled': False})
+        
+        is_compatible, message = check_gpu_compatibility(settings)
+        
+        assert is_compatible == False
+        assert "GPU désactivé" in message
+    
+    @patch('ytsplit.cutting.ffmpeg.check_nvenc_availability')
+    def test_check_gpu_compatibility_nvenc_not_available(self, mock_nvenc):
+        """Test NVENC non disponible."""
+        from ytsplit.cutting.ffmpeg import check_gpu_compatibility
+        
+        mock_nvenc.return_value = False
+        settings = Settings(gpu={'enabled': True})
+        
+        is_compatible, message = check_gpu_compatibility(settings)
+        
+        assert is_compatible == False
+        assert "NVENC non disponible" in message
+    
+    @patch('ytsplit.cutting.ffmpeg.check_nvenc_availability')
+    def test_check_gpu_compatibility_success(self, mock_nvenc):
+        """Test compatibilité GPU réussie."""
+        from ytsplit.cutting.ffmpeg import check_gpu_compatibility
+        
+        mock_nvenc.return_value = True
+        settings = Settings(gpu={'enabled': True, 'encoder': 'h264_nvenc', 'preset': 'p7'})
+        
+        is_compatible, message = check_gpu_compatibility(settings)
+        
+        assert is_compatible == True
+        assert "GPU prêt: h264_nvenc preset p7" in message
+    
+    @patch('ytsplit.cutting.ffmpeg.check_gpu_compatibility')
+    def test_build_ffmpeg_command_with_gpu(self, mock_gpu_check, cutter_with_gpu, plan_item, tmp_path):
+        """Test construction commande FFmpeg avec GPU."""
+        # Simuler GPU compatible
+        mock_gpu_check.return_value = (True, "GPU ready")
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        cmd = cutter_with_gpu._build_ffmpeg_command(source_path, plan_item)
+        
+        # Vérifications GPU
+        assert "-hwaccel" in cmd
+        assert "cuda" in cmd
+        assert "-c:v" in cmd
+        assert "h264_nvenc" in cmd
+        assert "-preset" in cmd
+        assert "p7" in cmd
+        assert "-cq" in cmd
+        assert "18" in cmd
+        assert "-c:a" in cmd
+        assert "copy" in cmd  # Audio en copy pour GPU
+    
+    @patch('ytsplit.cutting.ffmpeg.check_gpu_compatibility')
+    def test_build_ffmpeg_command_gpu_fallback_cpu(self, mock_gpu_check, cutter_with_gpu, plan_item, tmp_path):
+        """Test fallback CPU quand GPU non compatible."""
+        # Simuler GPU non compatible
+        mock_gpu_check.return_value = (False, "GPU not ready")
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        cmd = cutter_with_gpu._build_ffmpeg_command(source_path, plan_item)
+        
+        # Vérifications fallback CPU
+        assert "-hwaccel" not in cmd
+        assert "cuda" not in cmd
+        assert "-c:v" in cmd
+        assert "libx264" in cmd  # Fallback x264
+        assert "-crf" in cmd
+        assert "-preset" in cmd
+        assert "veryfast" in cmd  # Preset x264
+        assert "-c:a" in cmd
+        assert "aac" in cmd  # Audio réencodé en CPU
+    
+    @patch('ytsplit.cutting.ffmpeg.check_gpu_compatibility')
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_ffmpeg_command_gpu_with_crop(self, mock_resolution, mock_gpu_check, tmp_path):
+        """Test GPU avec crop activé."""
+        # Settings avec GPU et crop
+        settings = Settings(
+            gpu={'enabled': True, 'encoder': 'h264_nvenc', 'preset': 'p7'},
+            crop={'enabled': True, 'bottom': 40}
+        )
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        mock_gpu_check.return_value = (True, "GPU ready")
+        mock_resolution.return_value = (1920, 1080)
+        
+        plan_item = SplitPlanItem(
+            video_id="test123",
+            chapter_index=1, 
+            chapter_title="Test Chapter",
+            start_s=10.0,
+            end_s=70.0,
+            expected_duration_s=60.0,
+            output_path=tmp_path / "01 - Test Chapter.mp4"
+        )
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        cmd = cutter._build_ffmpeg_command(source_path, plan_item)
+        
+        # Vérifications GPU + crop
+        assert "-vf" in cmd
+        vf_index = cmd.index("-vf")
+        vf_filter = cmd[vf_index + 1]
+        assert "hwupload_cuda" in vf_filter
+        assert "crop=1920:1040:0:0" in vf_filter
+        assert "hwdownload" in vf_filter
+        assert "h264_nvenc" in cmd
+    
+    @patch('ytsplit.cutting.ffmpeg.check_gpu_compatibility')
+    @patch('ytsplit.utils.ffprobe.get_video_resolution')
+    def test_build_ffmpeg_command_cpu_with_crop(self, mock_resolution, mock_gpu_check, tmp_path):
+        """Test CPU avec crop activé."""
+        settings = Settings(
+            gpu={'enabled': True},  # GPU activé mais pas compatible
+            crop={'enabled': True, 'bottom': 40}
+        )
+        with patch.object(FFmpegCutter, '_validate_ffmpeg'):
+            cutter = FFmpegCutter(settings)
+        
+        mock_gpu_check.return_value = (False, "GPU not ready")
+        mock_resolution.return_value = (1920, 1080)
+        
+        plan_item = SplitPlanItem(
+            video_id="test123",
+            chapter_index=1,
+            chapter_title="Test Chapter", 
+            start_s=10.0,
+            end_s=70.0,
+            expected_duration_s=60.0,
+            output_path=tmp_path / "01 - Test Chapter.mp4"
+        )
+        
+        source_path = tmp_path / "source.mp4"
+        source_path.write_text("fake video")
+        
+        cmd = cutter._build_ffmpeg_command(source_path, plan_item)
+        
+        # Vérifications CPU + crop (pas de hw upload/download)
+        assert "-vf" in cmd
+        vf_index = cmd.index("-vf")
+        vf_filter = cmd[vf_index + 1]
+        assert vf_filter == "crop=1920:1040:0:0"  # Crop simple sans GPU
+        assert "hwupload_cuda" not in vf_filter
+        assert "libx264" in cmd
