@@ -1,0 +1,695 @@
+Spécification technique — “YouTube Chapter Splitter” (MVP précis)
+0) Objectif
+
+À partir d’une URL YouTube (non répertoriée ou non), télécharger la vidéo en MP4 puis générer une sous-vidéo par chapitre, en conservant tous les chapitres, avec des coupes précises (au niveau de la frame autant que possible). Produire également un manifest (JSON + CSV) décrivant les sorties.
+
+1) Vision & périmètre MVP
+
+Objectif MVP
+Entrée = URL(s) YouTube.
+Sorties = un dossier contenant N fichiers (un par chapitre conservé), nommés avec le numéro + titre de chapitre, + un manifest JSON/CSV (traces, timecodes, filtres appliqués).
+
+Règles MVP
+
+Télécharger en “bonne qualité” (1080p si possible, mp4), puis découper aux chapitres.
+
+Exclure certains chapitres via mots‑clés (Not to keep, Interruption, etc.).
+
+Nommer les fichiers : NN - Titre chapitre.mp4 (NN zéro‑paddé).
+
+Préparer la suite (V2) : affiner les coupes autour des marqueurs via détection de silences audio.
+
+2) Choix techniques (simples, robustes, évolutifs)
+
+Langage : Python 3.11+ (tu apprends Python – parfait).
+
+Téléchargement & métadonnées : yt-dlp (lib/CLI). Avantage : sait déjà lire les chapitres et offre une option native de split par chapitres et la suppression de chapitres par regex. 
+Arch Manual Pages
+
+Découpage vidéo : ffmpeg. Deux modes :
+
+Rapide (stream copy, -c copy) ⇒ très rapide mais aligné sur les i‑frames (peut décaler de quelques frames).
+
+Précis (ré-encodage contrôlé, -c:v libx264 -crf 18 -preset veryfast) ⇒ coupes exactes (frame‑accurate) ; plus lent. FFmpeg est frame‑accurate en entrée avec -ss en transcodage depuis v2.1. 
+FFmpeg Trac
+Stack Overflow
+
+Affinage V2 : ffmpeg filtre silencedetect pour détecter des pauses ± autour du timecode et “snapper” la coupe sur le silence le plus proche. 
+FFmpeg
+
+CLI : typer (ergonomique), logs jolis : rich.
+
+Config : .yaml via pydantic-settings (facile à versionner/paramétrer).
+
+Tests : pytest.
+
+Packaging Windows : pyinstaller (binaire simple sur ton PC).
+
+3) Architecture (packages & responsabilités)
+ytsplit/
+  __init__.py
+  cli.py                 # Interface ligne de commande Typer
+  config.py              # Pydantic: chemins, qualité, regex d'exclusion, mode coupe
+  models.py              # ChapterSegment, VideoMeta, SplitTask
+  providers/
+    youtube.py           # get_info(url) -> {title, id, chapters[], ...}; download()
+  parsing/
+    chapters.py          # parse fallback depuis texte description si besoin
+    timecode.py          # "01:23:45" -> secondes
+  planning/
+    plan.py              # build_segments(chapters, filters) -> [SplitTask]
+  cutting/
+    ffmpeg_split.py      # run_ffmpeg(task, mode='copy'|'reencode')
+  analysis/              # V2
+    silence.py           # snap_to_silence(ts, wav, window, threshold)
+  io/
+    naming.py            # slugify, collision handling, templates de noms
+    manifest.py          # write manifest.json/csv + rapport.md
+  utils/
+    ffprobe.py           # lecture durée, keyframes si besoin
+  tests/
+
+
+Points clés de conception
+
+Séparer l’acquisition (yt‑dlp), la compréhension des chapitres, la planification (filtres, temps début/fin) et l’exécution (ffmpeg).
+
+Tout passe par des modèles Pydantic (ChapterSegment, SplitTask) → facile à tester/valider, et extensible pour V2 (attributs tags, confidence, adjusted_ts, etc.).
+
+Idempotence : si un clip existe déjà et valide (durée ± tolérance), on skip.
+
+Manifest central (JSON + CSV) → exploitable dans Power Automate pour workflows annexes (upload privé, renommage, archivage).
+
+4) Pipeline détaillé (MVP)
+
+Validation & droits
+
+Vérifier que l’URL est de type YouTube et que tu es autorisé à traiter la vidéo (voir ToS). 
+YouTube
+
+Récupération métadonnées & chapitres
+
+yt-dlp -j URL pour obtenir le JSON (Titre, ID, chapters si disponibles).
+
+Si pas de chapters structurés, parser le texte de description (regex tolérante) — ton exemple est parfait :
+^\s*(\d\d:)?\d\d:\d\d:\d\d\s+[- ]?\s*(.+?)\s*(?:\[\d+.*])?$
+
+Enrichir chaque chapitre d’attributs : keep=True/False selon mots‑clés (Not to keep, Interruption, etc.), category=("QUIZ", …).
+
+Planification des segments
+
+Pour chaque chapitre à garder :
+start = chap[i].t0, end = chap[i+1].t0 (ou durée vidéo pour le dernier).
+
+Appliquer offsets optionnels (--lead-in 0.2s, --tail-out 0.2s) si souhaité, sans chevauchement.
+
+Stratégie mode de coupe :
+
+Par défaut : mode="copy" (rapide).
+
+Si segment < X s ou si précision requise : mode="reencode".
+
+Option avancée : --force-keyframes-at-cuts via yt‑dlp/ffmpeg pour des coupes plus propres au prix d’un ré-encodage (utile sur chapitres très courts). 
+Arch Manual Pages
+
+Téléchargement vidéo
+
+yt-dlp -f "bv*[height<=1080][ext=mp4]+ba/best" --merge-output-format mp4 → un seul MP4 cohérent.
+
+Découpage
+
+Rapide : ffmpeg -ss <start> -to <end> -i in.mp4 -c copy out.mp4 (rapide, dépend des keyframes).
+
+Précis : ffmpeg -ss <start> -to <end> -i in.mp4 -c:v libx264 -crf 18 -preset veryfast -c:a aac -movflags +faststart out.mp4 (frame‑accurate).
+(Notes de référence sur -ss/précision et keyframes. ) 
+FFmpeg Trac
+Stack Overflow
+
+Sorties & traçabilité
+
+Dossier ./output/<video-title-id>/NN - Titre chapitre.mp4
+
+manifest.json + manifest.csv : index, titres, start/end, durée, mode de coupe, statut.
+
+rapport.md (lisible) : liens https://youtube.com/watch?v=ID&t={start}s pour relecture ciblée.
+
+5) Ligne de commande « prêt à l’emploi » (POC ultra-rapide)
+
+Pour tester sans coder tout de suite, yt‑dlp sait déjà tout faire ou presque :
+
+yt-dlp "URL_YOUTUBE"
+  -f "bv*[height<=1080][ext=mp4]+ba/best" --merge-output-format mp4 \
+  --split-chapters \
+  --remove-chapters "(?i)(Not to keep|Interruption)" \
+  -o "chapter:%(section_number)02d - %(section_title)s.%(ext)s"
+
+
+--split-chapters crée un fichier par chapitre.
+
+--remove-chapters REGEX exclut les chapitres non désirés par regex.
+
+Le préfixe chapter: dans -o cible le nommage des fichiers scindés.
+Références manpage : options --split-chapters, --remove-chapters, et output template chapter:. 
+Arch Manual Pages
+
+Limites POC : précision liée aux keyframes (voir §4.5) et moindre contrôle sur les heuristiques. Mais c’est parfait pour valider ton flux de bout en bout en <1h de mise en place.
+
+6) Spécification de la CLI (MVP codé)
+
+Exemple d’interface (Typer) :
+
+ytsplit URL \
+  --out ./output \
+  --quality 1080p \
+  --skip "(?i)(Not to keep|Interruption)" \
+  --mode copy            # copy|reencode|auto
+  --template "{n:02d} - {title}" \
+  --export-manifest csv,json
+
+
+Paramètres utiles
+
+--mode auto : re-encode si segment < 20s ou si échec de validation (durée sortie ≠ durée attendue ±0.3s).
+
+--lead-in/--tail-out : micro‑marges (p.ex. 0.15 s).
+
+--max-parallel : N coupes FFmpeg en parallèle.
+
+--dry-run : ne fait qu’un plan (CSV/JSON) sans couper.
+
+7) Exemple : filtrage de ton chapitrage
+
+Ta liste inclut de nombreuses balises (Not to keep) et Interruption. Le filtre par défaut proposé :
+
+skip_regex = r"(?i)(Not to keep|Interruption)"
+
+
+Sont gardés par ex. 5 - Training Fundamentals - Understanding "Process-on", 23 - QUIZ QUESTION - ..., etc.
+Le manifest inclura une colonne kept=True/False pour audit rapide.
+
+8) V2 – Affiner les coupes (détection de silences)
+
+Idée : autour de chaque t0 de chapitre, chercher dans une fenêtre ±Δ (ex. ±0.6 s) la pause la plus proche et recaler le cut sur ce point.
+
+Extraire l’audio temporaire : ffmpeg -i in.mp4 -vn -ac 1 -ar 16000 in.wav
+
+Détecter les silences :
+ffmpeg -i in.wav -af "silencedetect=n=-40dB:d=0.2" -f null - 2> silences.log
+(le filtre renseigne silence_start / silence_end avec le seuil et la durée minimale paramétrables). 
+FFmpeg
+
+Algorithme snap :
+
+Récupérer toutes les zones de silence dans [t0-Δ, t0+Δ].
+
+Choisir celle la plus proche de t0 tout en garantissant : (a) pas d’inversion d’ordre chapitres, (b) min length du segment (ex. ≥ 4s).
+
+Mettre à jour start_adj puis exécuter la coupe.
+
+Mode avancé : si pas de silence trouvé, fallback t0.
+
+Variante : utiliser uniquement yt‑dlp + --force-keyframes-at-cuts pour forcer des i‑frames aux timestamps de coupe (ré‑encodage nécessaire). 
+Arch Manual Pages
+
+9) Qualité, performance, robustesse
+
+Validation post‑cut : comparer durée attendue vs obtenue (via ffprobe). Si écart > 0.3 s ⇒ re‑essai en mode=reencode.
+
+Nom de fichiers sûrs : slugify + longueur max (Windows).
+
+Rapidité : paralléliser les coupes (attention I/O disque).
+
+Reprise : si le téléchargement existe déjà (hash/taille), ne pas re‑télécharger.
+
+Journalisation : log par segment (cmd ffmpeg, durée, statut).
+
+10) Roadmap d’améliorations
+
+UI simple (Streamlit) pour sélection visuelle des chapitres à garder/renommer.
+
+Sous‑titres : récupérer et re‑découper les .srt/vtt par chapitres (yt‑dlp gère les sous‑titres ; scission à orchestrer côté ffmpeg/py). 
+GitHub
++1
+
+Upload automatique (YouTube Data API) en privé/non répertorié + templates de description (manifeste → description).
+
+Power Automate : watcher de dossier + actions (archivage, partage, création d’index).
+
+Support multi‑plateformes (Vimeo, fichiers locaux) via providers/*.
+
+11) Extraits de commandes utiles (référence)
+
+Télécharger 1080p mp4 fusionné :
+
+yt-dlp -f "bv*[height<=1080][ext=mp4]+ba/best" --merge-output-format mp4 URL
+
+
+Découpe rapide (copy) :
+
+ffmpeg -ss 00:03:09 -to 00:05:21 -i in.mp4 -c copy "02 - Document Types_ Pictures.mp4"
+
+
+Découpe précise (ré-encodage) :
+
+ffmpeg -ss 00:03:09 -to 00:05:21 -i in.mp4 \
+       -c:v libx264 -crf 18 -preset veryfast -c:a aac -movflags +faststart \
+       "02 - Document Types_ Pictures.mp4"
+
+
+(Précision -ss en transcodage documentée par FFmpeg.) 
+FFmpeg Trac
+
+POC 1‑ligne split chapitres + exclusion :
+
+yt-dlp "URL" --split-chapters \
+  --remove-chapters "(?i)(Not to keep|Interruption)" \
+  -o "chapter:%(section_number)02d - %(section_title)s.%(ext)s"
+
+
+(Options confirmées par le manuel yt‑dlp.) 
+Arch Manual Pages
+
+12) Ce que je te propose de construire en premier
+
+POC “tout‑en‑un” basé sur yt-dlp (commande ci‑dessus) pour valider que tes chapitres se scindent bien et que la regex exclut ce qu’il faut.
+
+CLI Python ytsplit (structure §3/§6) avec :
+
+Source chapitres = yt‑dlp JSON ou parseur texte.
+
+Filtre --skip par regex.
+
+Modes copy|reencode|auto, manifest CSV/JSON.
+
+Validation & polish (noms fichiers, manifest riche, reprise).
+
+V2 Silence‑snap (module analysis/silence.py) avec paramètres : window, dB, min_silence. 
+FFmpeg
+
+Si tu veux, je peux te fournir le squelette de projet (fichiers + CLI Typer) et un parseur prêt à ingérer exactement le chapitrage que tu m’as donné, avec un jeu de tests minimal. Ensuite on branche ffmpeg et on a un pipeline MVP opérationnel.
+
+Vous avez dit :
+Merci pour ce que tu m'as proposé, c'est très intéressant, j'ai bien regardé aussi "yt-dlp" qui est un projet vraiment très intéressant et puissant. De mon côté, je souhaite pour l'instant ne pas faire de filtrage par rapport au chapitrage. Je sais qu'il y a des endroits où il y a des balises d'interruption et qui disent de ne pas garder cette partie, mais dans un premier temps je souhaite tout garder parce que c'est plus intéressant pour moi. Pour la qualité des coupes de FFmpeg, je voudrais que dans un premier temps ce soit les coupes les plus précises possibles. C'est important pour moi. Je voudrais donc que tu prennes en compte ce que je viens de dire et également que tu me fasses un fichier de spécification technique que je pourrais donner à un assistant de codage IA.
+ChatGPT a dit :
+Réflexion durant 8s
+
+Parfait, merci pour les précisions. Voici un fichier de spécification technique prêt à remettre à un assistant de codage IA. Il intègre tes choix : garder tous les chapitres (aucun filtrage) et privilégier des coupes les plus précises possibles (frame-accurate) dès le MVP.
+
+Spécification technique — “YouTube Chapter Splitter” (MVP précis)
+0) Objectif
+
+À partir d’une URL YouTube (non répertoriée ou non), télécharger la vidéo en MP4 puis générer une sous-vidéo par chapitre, en conservant tous les chapitres, avec des coupes précises (au niveau de la frame autant que possible). Produire également un manifest (JSON + CSV) décrivant les sorties.
+
+1) Périmètre fonctionnel
+
+Entrée : 1..N URL(s) YouTube.
+
+Sorties :
+
+Dossier ./output/<video-title-id>/ contenant une vidéo MP4 par chapitre.
+
+Nommage : NN - <Titre chapitre>.mp4 (NN = section_number sur 2 chiffres).
+
+manifest.json et manifest.csv décrivant : index, titres, t0/t1 (hh:mm:ss.sss), durée attendue, durée obtenue, statut (OK/ERR), mode de coupe, horodatage d’exécution, etc.
+
+Conserver tous les chapitres (aucune exclusion).
+
+Précision : d’emblée, utiliser un mode de coupe précis (ré-encodage contrôlé).
+
+Si la vidéo possède des chapitres structurés (donnés par YouTube) → les utiliser.
+Si non, parser la description (format texte) pour reconstituer les chapitres.
+
+2) Hypothèses & contraintes
+
+L’utilisateur détient les droits d’utilisation/découpage des vidéos.
+
+Windows 10/11 (PC), Python 3.11+ installé.
+
+ffmpeg et ffprobe accessibles dans le PATH.
+
+Utilisation de yt-dlp pour télécharger et extraire métadonnées/chapitres.
+
+Longues vidéos (2–3 h), nécessité de robustesse et reprise.
+
+3) Architecture logicielle
+ytsplit/
+  __init__.py
+  cli.py                # Typer: interface CLI
+  config.py             # Pydantic settings (paths, qualité, preset, tolérances)
+  models.py             # Pydantic: VideoMeta, Chapter, SplitPlanItem, Result
+  providers/youtube.py  # get_info(url), download(url) -> paths + meta + chapters
+  parsing/chapters.py   # parse_chapters_from_description(text) -> [Chapter]
+  parsing/timecode.py   # "HH:MM:SS" -> float seconds; et inverse
+  planning/plan.py      # build_split_plan(chapters, duration) -> [SplitPlanItem]
+  cutting/ffmpeg.py     # cut_precise(plan_item) -> Result (ré-encodage)
+  io/naming.py          # slugify, template noms, collisions
+  io/manifest.py        # write_manifest_json/csv, rapport markdown
+  utils/ffprobe.py      # get_duration(file), stream info, validate_duration
+  tests/                # pytest
+
+
+Séparation claire des responsabilités.
+
+Modèles Pydantic pour sérialisation/validation et tests unitaires.
+
+Idempotence : si une sortie existe et correspond (durée dans la tolérance), on la saute.
+
+4) Technologies & bibliothèques
+
+Python : typer, pydantic, pydantic-settings, rich, subprocess (ou ffmpeg-python si souhaité), pathlib, csv, json.
+
+Téléchargement : yt-dlp (exécuté via subprocess, ou lib Python).
+
+Découpage : ffmpeg (ré-encodage pour la précision), ffprobe (validation).
+
+5) Modèles de données (Pydantic)
+class Chapter(BaseModel):
+    index: int                 # 1-based ou 0-based; utiliser 1-based pour lisibilité
+    title: str
+    start_s: float             # secondes depuis 0.0
+    end_s: float               # rempli au planning
+    raw_label: str | None = None  # libellé brut si parsing description
+
+class VideoMeta(BaseModel):
+    video_id: str
+    title: str
+    duration_s: float
+    chapters: list[Chapter]
+
+class SplitPlanItem(BaseModel):
+    video_id: str
+    chapter_index: int
+    chapter_title: str
+    start_s: float
+    end_s: float
+    expected_duration_s: float
+    output_path: Path
+    mode: Literal["reencode"] = "reencode"
+
+class SplitResult(BaseModel):
+    output_path: Path
+    chapter_index: int
+    chapter_title: str
+    start_s: float
+    end_s: float
+    expected_duration_s: float
+    obtained_duration_s: float | None
+    status: Literal["OK", "ERR"]
+    message: str | None = None
+
+6) Flux de traitement
+
+Récupération métadonnées
+
+yt-dlp -j URL → JSON avec title, id, duration, chapters éventuels.
+
+Si chapters absent, télécharger la description et appeler parse_chapters_from_description(text).
+
+Téléchargement vidéo source (MP4)
+
+Profil qualité : vidéo ≤1080p MP4 + audio (fusionné) → source.mp4.
+
+Conserver le fichier dans ./cache/<video-id>/source.mp4 (réutilisable).
+
+Planning des segments
+
+Ordonner les chapitres par start_s.
+
+Définir end_s = start_s du chapitre suivant, sinon duration_s vidéo.
+
+Construire la liste [SplitPlanItem] sans filtrage (tout garder).
+
+Découpage précis (ré-encodage)
+
+Pour chaque SplitPlanItem, appeler ffmpeg en mode précis :
+
+Recommandation précision : utiliser -ss après -i (seek décodé) avec ré-encodage pour un time-seek frame-accurate.
+
+Commande de base (voir §8).
+
+Validation & manifest
+
+ffprobe sur chaque sortie → obtained_duration_s.
+
+Valider |expected_duration_s − obtained_duration_s| ≤ tolérance (cf. §7).
+
+Écrire manifest.json + manifest.csv + rapport.md (liens chapitres).
+
+7) Précision, performance, tolérances
+
+Mode unique MVP : reencode pour toutes les coupes.
+
+Paramètres par défaut :
+
+Vidéo : -c:v libx264 -crf 18 -preset veryfast
+
+Audio : -c:a aac -b:a 192k
+
+Conteneur : -movflags +faststart
+
+Tolérance de validation :
+
+Par défaut : max_abs_delta = min(0.150 s, 2 frames équivalentes)
+(par ex. 0.083 s si 24 fps ; 0.080 s si 25 fps ; 0.067 s si 30 fps)
+
+Alignement chapter → coupe :
+
+Pas d’offset auto au MVP (aucune recherche de silence).
+
+S’assurer de ne pas tronquer le segment final (utiliser -to).
+
+8) Commandes FFmpeg (référence d’implémentation)
+
+Découpe précise (ré-encodage) — recommandée pour frame-accuracy :
+
+ffmpeg -hide_banner -loglevel error \
+  -i "source.mp4" \
+  -ss {START} -to {END} \
+  -c:v libx264 -crf 18 -preset veryfast \
+  -c:a aac -b:a 192k \
+  -movflags +faststart \
+  -map 0 \
+  "{OUTPUT}.mp4"
+
+
+{START} / {END} au format HH:MM:SS.mmm (générés depuis start_s/end_s avec millisecondes).
+
+-ss après -i pour une recherche précise (décodée).
+
+-map 0 pour conserver toutes les pistes présentes (si multi-pistes/sous-titres).
+
+Validation (extraction durée) :
+
+ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{OUTPUT}.mp4"
+
+9) CLI (Typer)
+Commande
+ytsplit URL [URL ...] \
+  --out ./output \
+  --work ./cache \
+  --quality 1080p \
+  --crf 18 \
+  --preset veryfast \
+  --audio-bitrate 192k \
+  --template "{n:02d} - {title}" \
+  --export-manifest json,csv \
+  --max-parallel 2 \
+  --tolerance-seconds 0.15
+
+Comportement
+
+Télécharge (si absent), planifie les segments, coupe en ré-encodage, valide, écrit manifest.
+
+En cas d’échec d’un segment, écrit status=ERR et message dans le manifest, puis continue.
+
+10) Configuration (pydantic-settings)
+
+settings.yaml (optionnel) :
+
+out_dir: "./output"
+work_dir: "./cache"
+video_format: "mp4"
+quality: "1080p"
+x264:
+  crf: 18
+  preset: "veryfast"
+audio:
+  codec: "aac"
+  bitrate: "192k"
+manifest:
+  export: ["json", "csv", "md"]
+validation:
+  tolerance_seconds: 0.15
+parallel:
+  max_workers: 2
+naming:
+  template: "{n:02d} - {title}"
+  sanitize_maxlen: 120
+
+11) Parsing des chapitres (fallback “description → chapitres”)
+
+Détecter lignes de la forme :
+HH:MM:SS <texte> ou MM:SS <texte>
+Variantes possibles (ton exemple y ressemble) :
+
+Séparateurs -, : ou espace après le timecode
+
+Suffixes entre () ou [] (ne pas influer sur le titre)
+
+Regex robuste (exemple) :
+
+Timecode : (?P<tc>(\d{1,2}:)?\d{1,2}:\d{2})
+
+Titre : le reste de la ligne, trim puis retirer décorations [...]/(...) finales si elles contiennent uniquement durées/notes.
+
+Convertir chaque tc en secondes (timecode.py).
+
+Générer une liste Chapter ordonnée, index incrémental à partir de 1.
+
+12) Planification des segments
+
+Pour i dans [1..N] :
+
+start_s = chapters[i].start_s
+
+end_s = chapters[i+1].start_s sinon video.duration_s
+
+expected_duration_s = end_s - start_s
+
+output_path = out_dir / f"{i:02d} - {slug(title)}.mp4"
+
+13) Nommage des fichiers
+
+io/naming.py :
+
+slugify(title): remplace caractères interdits Windows (<>:"/\|?*), normalise espaces, limite longueur.
+
+Gérer collisions (… (2).mp4) si un nom existe déjà.
+
+14) Manifest & rapport
+
+manifest.json : tableau de SplitResult + métadonnées globales (video_id, source path, durée totale, horodatage exécution).
+
+manifest.csv : colonnes : index,title,start,end,expected_sec,obtained_sec,status,message,output_path.
+
+rapport.md :
+
+Titre vidéo, URL source.
+
+Tableau chapitres avec liens https://www.youtube.com/watch?v=<id>&t=<start_s>s.
+
+Statistiques (nombre de segments OK/ERR, durée totale découpée, temps d’exécution).
+
+15) Gestion d’erreurs & reprise
+
+Si yt-dlp échoue → consigner et arrêter cette URL, passer à la suivante.
+
+Si un segment échoue (retcode ffmpeg ≠ 0) :
+
+Réessayer une fois avec preset plus lent (faster → medium), sinon status=ERR.
+
+Reprise :
+
+Si source.mp4 existe → ne pas re-télécharger.
+
+Si output_path existe et la validation passe → ignorer ce segment.
+
+16) Tests (pytest)
+
+Unitaires :
+
+timecode: conversions HH:MM:SS(.ms) ↔ secondes.
+
+chapters parser : sur ton échantillon (voir §18), vérifier index, title, start_s.
+
+plan: vérifie calcul de end_s/expected_duration_s et ordonnancement.
+
+Intégration (petit sample local) :
+
+Vidéo courte synthétique (ou un fichier local) + 3 chapitres → 3 sorties validées.
+
+Validation :
+
+Tolérance : comparer expected_duration_s et obtained_duration_s.
+
+17) Performance
+
+Paralléliser ffmpeg à 2-3 processus max (I/O disque + CPU).
+
+preset ajustable ; veryfast par défaut → bon compromis précision/temps.
+
+Possibilité d’activer -threads 0 (auto) si laissé par défaut.
+
+18) Exemple d’application à ton chapitrage
+
+Entrée : la liste fournie (aucun filtrage).
+
+Résultat attendu : 41 fichiers (01 à 41), incluant les sections “Interruption” ou “Not to keep” (puisqu’on garde tout).
+
+Noms (exemples) :
+
+01 - Second Session Introduction (Not to keep).mp4
+
+02 - Second Session Agenda (Not to keep).mp4
+
+…
+
+41 - Conclusion & Q&A (Not to keep).mp4
+
+(Les parenthèses et caractères spéciaux seront nettoyés si nécessaire par slugify.)
+
+19) Pseudocode haut niveau
+def process_urls(urls: list[str], settings: Settings):
+    for url in urls:
+        meta = youtube.get_info(url)               # title, id, duration, chapters?
+        if not meta.chapters:
+            desc = youtube.get_description(url)
+            meta.chapters = chapters.parse(desc)
+        source = youtube.download(url, settings)   # returns path to source.mp4
+        plan = planning.build_split_plan(meta)
+        results = []
+        for item in plan:
+            res = cutting.ffmpeg_cut_precise(source, item, settings)
+            res = validate_with_ffprobe(res, settings.validation.tolerance_seconds)
+            results.append(res)
+        manifest.write_all(meta, results, settings.out_dir)
+
+20) Critères d’acceptation (MVP)
+
+ Pour une URL comportant des chapitres, 100% des chapitres donnent un fichier (pas d’exclusion).
+
+ Chaque fichier est lisible (MP4 H.264/AAC) et son nom suit le template.
+
+ Écart de durée |expected − obtained| ≤ 0,15 s (ou ≤ 2 frames) pour ≥ 95% des segments (les autres marqués ERR avec message explicite).
+
+ Le manifest JSON+CSV est produit et cohérent (nb segments, chemins valides).
+
+ Le processus est re-entrant (reprise sans retélécharger ni recouper inutilement).
+
+21) Évolutions prévues (post-MVP)
+
+Détection de silences (module analysis/silence.py) pour “snapper” start_s dans une fenêtre ±Δ et améliorer encore la perception.
+
+Option copy (rapide) pour cas où la précision frame-accurate n’est pas requise.
+
+Sous-titres : téléchargement et découpe synchronisée.
+
+UI minimal (Streamlit) pour inspection/navigateur de chapitres.
+
+Uploader automatique (YouTube, stockage cloud, etc.).
+
+22) Détails à fournir à l’assistant IA (prompts utiles)
+
+“Crée le squelette de projet Python selon l’arborescence §3, avec typer et pydantic.”
+
+“Implémente providers/youtube.py pour appeler yt-dlp -j et yt-dlp (download).”
+
+“Écris parsing/chapters.py avec une regex tolérante au format de l’exemple §18.”
+
+“Code cutting/ffmpeg.py avec la commande de §8 (ré-encodage précis) et gestion des erreurs.”
+
+“Ajoute utils/ffprobe.py pour valider la durée des sorties, tolérance 0,15 s.”
+
+“Implémente io/manifest.py (JSON/CSV/MD) et io/naming.py (slugify).”
+
+“Écris des tests pytest pour timecode, parser, planner et validation.”
