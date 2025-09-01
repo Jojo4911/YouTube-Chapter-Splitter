@@ -158,3 +158,7 @@ test_cache/
 test_crop/
 custom/
 nul
+
+integration_rapide_srt_par_chapitres.md
+Specifications_techniques_MVP.txt
+youtube_captions_oauth_guide.md
