@@ -18,7 +18,9 @@ def _run_ffprobe_command(cmd: list[str]) -> str:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         
         if result.returncode != 0:
@@ -297,7 +299,9 @@ def check_ffprobe_availability() -> bool:
             ["ffprobe", "-version"],
             capture_output=True,
             text=True,
-            timeout=5
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
         )
         return True
     except (subprocess.TimeoutExpired, FileNotFoundError):

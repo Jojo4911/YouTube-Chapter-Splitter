@@ -153,5 +153,8 @@ client_secret.json
 cookies.txt
 debug_work/
 test_work/
+test_output/
+test_cache/
+test_crop/
 custom/
 nul

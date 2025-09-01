@@ -588,3 +588,18 @@ Notes:
 
 - Le rapprochement se fait par ID vidéo (indépendant du titre et des caractères Windows).
 - Vous pouvez réactiver ponctuellement le téléchargement auto (yt‑dlp) via la configuration (`subtitles.auto_download`), mais il est OFF par défaut.
+\n### Encodage Windows (accents)
+- Sous PowerShell, pour afficher correctement les accents:
+  - `chcp 65001 > $null`
+  - `[Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false)`
+  - `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`
+  - `$OutputEncoding = [Console]::OutputEncoding`
+- Pour Python dans la session: `$env:PYTHONUTF8='1'` et `$env:PYTHONIOENCODING='utf-8'`.
+- PowerShell 7 + Windows Terminal recommandés.
+
+### Dossiers générés et ignorés
+- `output/`: sorties vidéo finales (conservé par défaut)
+- `cache/`: répertoire de travail (temporaire)
+- `custom/`: ressources locales (ex: SRT fournis)
+- `test_output/`, `test_work/`, `test_cache/`, `test_crop/`: dossiers de tests – ignorés par Git
+- Caches: `__pycache__/`, `.pytest_cache/` – ignorés/supprimables sans risque

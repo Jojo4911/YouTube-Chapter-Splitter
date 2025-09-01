@@ -23,9 +23,18 @@ def check_nvenc_availability() -> bool:
         bool: True si NVENC est disponible, False sinon
     """
     try:
-        result = subprocess.run([
-            "ffmpeg", "-hide_banner", "-encoders"
-        ], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-encoders",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
         
         if result.returncode != 0:
             return False
@@ -69,7 +78,9 @@ class FFmpegCutter:
                 ["ffmpeg", "-version"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
             )
             if result.returncode != 0:
                 raise FFmpegError("FFmpeg n'est pas correctement installÃ©")
@@ -111,7 +122,9 @@ class FFmpegCutter:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minutes max par segment
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,  # 5 minutes max par segment
             )
             
             processing_time = time.time() - start_time

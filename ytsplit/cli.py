@@ -406,7 +406,14 @@ def process_single_video(url: str, settings: Settings) -> ProcessingStats:
                         shown = 0
                         for dc in diag_cmds:
                             try:
-                                r = subprocess.run(dc, capture_output=True, text=True, timeout=30)
+                                r = subprocess.run(
+                                    dc,
+                                    capture_output=True,
+                                    text=True,
+                                    encoding="utf-8",
+                                    errors="replace",
+                                    timeout=30,
+                                )
                                 console.print(f"      $ {' '.join(dc)} -> rc={r.returncode}")
                                 if r.stdout:
                                     console.print(Panel(r.stdout[:1200] if len(r.stdout) > 1200 else r.stdout, title="yt-dlp stdout", subtitle="tronquÃ©" if len(r.stdout) > 1200 else ""))

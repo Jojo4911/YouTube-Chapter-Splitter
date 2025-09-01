@@ -28,7 +28,14 @@ class YouTubeProvider:
 
     def _validate_ytdlp(self) -> None:
         try:
-            result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ["yt-dlp", "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
             if result.returncode != 0:
                 raise YouTubeError("yt-dlp n'est pas correctement installé")
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -65,7 +72,14 @@ class YouTubeProvider:
         try:
             cmd = ["yt-dlp", "--dump-json", "--no-download", "--no-warnings", url]
             self.last_ytdlp_command = cmd
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
             if result.returncode != 0:
                 self.last_ytdlp_error = result.stderr
                 raise YouTubeError(f"Échec extraction métadonnées: {result.stderr}")
@@ -174,7 +188,14 @@ class YouTubeProvider:
             cmd = base_cmd + ["--cookies", str(cookies_file), url]
             self.last_ytdlp_command = cmd
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                )
                 if result.returncode == 0:
                     self.last_ytdlp_error = None
                     return result
@@ -187,7 +208,14 @@ class YouTubeProvider:
             cmd = base_cmd + ["--cookies-from-browser", browser, url]
             self.last_ytdlp_command = cmd
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                )
                 if result.returncode == 0:
                     self.last_ytdlp_error = None
                     return result
@@ -203,7 +231,14 @@ class YouTubeProvider:
         ]
         self.last_ytdlp_command = cmd
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
             if result.returncode == 0:
                 self.last_ytdlp_error = None
                 return result
@@ -467,4 +502,3 @@ def create_youtube_provider(settings: Optional[Settings] = None) -> YouTubeProvi
         from ..config import get_default_settings
         settings = get_default_settings()
     return YouTubeProvider(settings)
-
