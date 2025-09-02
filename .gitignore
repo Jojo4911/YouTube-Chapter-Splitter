@@ -107,8 +107,11 @@ dmypy.json
 .pyre/
 
 # YouTube Chapter Splitter specific
-cache/
-output/
+# Keep directories in repo but ignore their contents
+cache/*
+!cache/.gitkeep
+output/*
+!output/.gitkeep
 *.mp4
 *.mkv
 *.avi
@@ -156,7 +159,8 @@ test_work/
 test_output/
 test_cache/
 test_crop/
-custom/
+custom/*
+!custom/.gitkeep
 nul
 
 integration_rapide_srt_par_chapitres.md
